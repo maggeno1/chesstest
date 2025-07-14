@@ -1,0 +1,66 @@
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+<script>
+    let stompClient = null;
+
+    function connect() {
+        // Verbindet sich mit dem SockJS-Fallbacks und dem STOMP-Protokoll
+        let socket = new SockJS('/ws'); // Der im Spring Boot definierte Endpunkt
+        stompClient = Stomp.over(socket);
+        stompClient.connect({}, function (frame) {
+            console.log('Verbunden: ' + frame);
+            // Abonnieren des Topics für Teilnehmer-Updates
+            stompClient.subscribe('/topic/teilnehmerUpdates', function (message) {
+                const updatedTeilnehmer = JSON.parse(message.body);
+                console.log('Update erhalten:', updatedTeilnehmer);
+                updateTable(updatedTeilnehmer); // Funktion zur Aktualisierung der Tabelle
+            });
+        });
+    }
+
+    function disconnect() {
+        if (stompClient !== null) {
+            stompClient.disconnect();
+        }
+        console.log("Getrennt");
+    }
+
+    function updateTable(data) {
+        const rowId = `teilnehmer-${data.id}`;
+        let row = document.getElementById(rowId);
+
+        if (!row) {
+            // Wenn die Zeile nicht existiert, sollten Sie sie hinzufügen.
+            // Für ein initiales Laden der Daten kann der getAllTeilnehmer Endpunkt verwendet werden.
+            // Für hinzugefügte Teilnehmer müsste hier die Logik zum Erstellen einer neuen Zeile implementiert werden.
+            console.warn(`Zeile für Teilnehmer-ID ${data.id} nicht gefunden. Implementiere Logik zum Hinzufügen.`);
+            return;
+        }
+
+        // Aktualisiere die Zellen in der vorhandenen Zeile
+        // ... (Der gleiche Logik wie im Python-Beispiel, um die TD-Elemente zu aktualisieren)
+        row.children[0].innerText = data.id;
+        row.children[1].innerText = data.verein;
+        row.children[2].innerText = data.name;
+        row.children[3].innerText = data.altersklasse;
+
+        const startgebuehrCell = row.children[4];
+        startgebuehrCell.innerText = data.startgebuehrBezahlt ? 'Ja' : 'Nein'; // Beachten Sie camelCase für Java-Properties
+        startgebuehrCell.className = data.startgebuehrBezahlt ? 'paid' : 'not-paid';
+
+        row.children[5].innerText = data.startgebuehrMussNichtZahlen ? 'Ja' : 'Nein';
+        row.children[6].innerText = data.anwesenheitsStatus;
+        row.children[7].innerText = data.kommentar || '';
+
+        // Aktualisiere die Zeilenklasse für Anwesenheitsstatus
+        row.className = ''; // Reset
+        if (data.anwesenheitsStatus === 'anwesend') {
+            row.classList.add('present');
+        } else if (data.anwesenheitsStatus === 'abgesagt') {
+            row.classList.add('absent');
+        }
+    }
+
+    // Initialisierung der Verbindung beim Laden der Seite
+    document.addEventListener('DOMContentLoaded', connect);
+</script>
