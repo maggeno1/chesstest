@@ -7,17 +7,32 @@
     <link rel="stylesheet" href="/css/style.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
-    <style>
-        /* Dies könnte auch in style.css sein */
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #f2f2f2; }
-        .paid { color: green; font-weight: bold; }
-        .not-paid { color: red; }
-        .present { background-color: #e6ffe6; }
-        .absent { background-color: #fff0f0; }
-    </style>
+    <script src="/js/qrcode.min.js"></script> <style>
+    /* Dies könnte auch in style.css sein */
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background-color: #f2f2f2; }
+    .paid { color: green; font-weight: bold; }
+    .not-paid { color: red; }
+    .present { background-color: #e6ffe6; }
+    .absent { background-color: #fff0f0; }
+    /* Neuer Stil für den QR-Code-Bereich im Admin-Dashboard */
+    .admin-dashboard-qr-section {
+        margin-top: 40px;
+        padding: 20px;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        background-color: #f9f9f9;
+        text-align: center;
+    }
+    #userHtmlQrCodeContainer {
+        margin-top: 15px;
+        border: 1px solid #ddd;
+        padding: 5px;
+        display: inline-block; /* Für Zentrierung */
+    }
+</style>
 </head>
 <body>
 <h1>Admin-Dashboard</h1>
@@ -39,25 +54,31 @@
     </tbody>
 </table>
 
+<div class="admin-dashboard-qr-section">
+    <h2>QR-Code zur Teilnehmerliste (user.html)</h2>
+    <p>Scanne diesen QR-Code, um die **Teilnehmerliste** (user.html) auf einem anderen Gerät zu öffnen.</p>
+    <div id="userHtmlQrCodeContainer"></div>
+    <p id="userHtmlQrMessage" style="margin-top: 10px;"></p>
+</div>
+
+
 <script>
     let stompClient = null;
-    const tableBody = document.getElementById('teilnehmer-table-body'); // <-- Holen Sie sich das tableBody Element einmal
+    const tableBody = document.getElementById('teilnehmer-table-body');
 
     function connect() {
         let socket = new SockJS('/ws');
         stompClient = Stomp.over(socket);
         stompClient.connect({}, function (frame) {
             console.log('Verbunden: ' + frame);
-            // Abonnieren des Topics für Teilnehmer-Updates
             stompClient.subscribe('/topic/teilnehmerUpdates', function (message) {
                 const updatedTeilnehmer = JSON.parse(message.body);
                 console.log('Update/Neuer Teilnehmer erhalten:', updatedTeilnehmer);
-                upsertTable(updatedTeilnehmer); // <-- Änderung: 'upsertTable' statt 'updateTable'
+                upsertTable(updatedTeilnehmer);
             });
         }, function(error) {
             console.error('STOMP Fehler:', error);
-            // Versuchen Sie, die Verbindung nach einer Verzögerung wiederherzustellen
-            setTimeout(connect, 5000); // Erneut verbinden in 5 Sekunden
+            setTimeout(connect, 5000);
         });
     }
 
@@ -68,24 +89,20 @@
         console.log("Getrennt");
     }
 
-    // <-- Neue/Geänderte Funktion zum Hinzufügen oder Aktualisieren
     function upsertTable(data) {
         const rowId = `teilnehmer-${data.id}`;
         let row = document.getElementById(rowId);
 
         if (!row) {
-            // Zeile existiert nicht, also ist es ein NEUER Teilnehmer
             row = document.createElement('tr');
             row.id = rowId;
-            tableBody.appendChild(row); // Füge die neue Zeile am Ende der Tabelle an
+            tableBody.appendChild(row);
             console.log(`Neue Zeile für Teilnehmer-ID ${data.id} hinzugefügt.`);
-            // Initialisiere die Zellen für die neue Zeile
             for (let i = 0; i < 8; i++) {
                 row.appendChild(document.createElement('td'));
             }
         }
 
-        // Fülle oder aktualisiere die Zellen der Zeile
         row.children[0].innerText = data.id;
         row.children[1].innerText = data.verein;
         row.children[2].innerText = data.name;
@@ -99,8 +116,7 @@
         row.children[6].innerText = data.anwesenheitsStatus;
         row.children[7].innerText = data.kommentar || '';
 
-        // Aktualisiere die Klassen für die Anwesenheit
-        row.className = ''; // Setze Klassen zurück
+        row.className = '';
         if (data.anwesenheitsStatus === 'anwesend') {
             row.classList.add('present');
         } else if (data.anwesenheitsStatus === 'abgesagt') {
@@ -108,9 +124,6 @@
         }
     }
 
-    document.addEventListener('DOMContentLoaded', connect);
-
-    // ZUSÄTZLICHE FUNKTION: Initiales Laden der Teilnehmerdaten
     async function loadInitialTeilnehmer() {
         try {
             const response = await fetch('/api/teilnehmer');
@@ -118,18 +131,86 @@
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             const teilnehmerList = await response.json();
-            tableBody.innerHTML = ''; // Leere vorhandene Einträge
+            tableBody.innerHTML = '';
 
             teilnehmerList.forEach(t => {
-                upsertTable(t); // Nutze die upsertTable Funktion auch für das initiale Laden
+                upsertTable(t);
             });
         } catch (error) {
             console.error("Fehler beim Laden der Teilnehmerdaten:", error);
         }
     }
 
-    // Lade die Initialdaten, sobald DOM bereit ist
-    document.addEventListener('DOMContentLoaded', loadInitialTeilnehmer);
+    // NEUE FUNKTION: Generiert und zeigt den QR-Code für die user.html an
+    async function generateUserHtmlQrCode() {
+        const qrCodeContainer = document.getElementById('userHtmlQrCodeContainer');
+        const qrMessage = document.getElementById('userHtmlQrMessage');
+
+        qrCodeContainer.innerHTML = 'Generiere QR-Code...';
+        qrMessage.innerText = '';
+
+        try {
+            // 1. Server-IP-Adresse vom Backend abrufen
+            const ipResponse = await fetch('/api/server-ip');
+            if (!ipResponse.ok) {
+                throw new Error(`HTTP error! status: ${ipResponse.status}`);
+            }
+            const serverIp = await ipResponse.text();
+
+            // 2. Volle URL für die user.html zusammenbauen
+            const port = window.location.port; // Holt den aktuellen Port der Seite
+            const userHtmlUrl = `http://${serverIp}:${port}/user.html`; // <-- Linkt zur user.html
+
+            console.log("URL für user.html QR-Code:", userHtmlUrl);
+
+            // 3. QR-Code generieren und anzeigen
+            if (qrCodeContainer && userHtmlUrl) {
+                const qr = new qrcode(10, "H");
+                qr.addData(userHtmlUrl, 'Byte');
+                qr.make();
+
+                const desiredTotalSize = 200; // Größe des QR-Codes
+                const moduleCount = qr.getModuleCount();
+                const cellSize = Math.floor(desiredTotalSize / (moduleCount + 8));
+                const margin = 4 * cellSize;
+
+                const imgTag = qr.createImgTag(cellSize, margin);
+
+                const linkTag = document.createElement('a');
+                linkTag.href = userHtmlUrl;
+                linkTag.target = "_blank"; // Öffnet den Link in einem neuen Tab
+                linkTag.innerHTML = imgTag;
+
+                qrCodeContainer.innerHTML = '';
+                qrCodeContainer.appendChild(linkTag);
+
+                qrCodeContainer.style.width = `${desiredTotalSize}px`;
+                qrCodeContainer.style.height = `${desiredTotalSize}px`;
+                qrCodeContainer.style.display = 'inline-block';
+                qrCodeContainer.style.margin = 'auto'; // Für Zentrierung
+
+                qrMessage.innerText = 'Scanne diesen QR-Code, um die Teilnehmerliste auf einem anderen Gerät zu öffnen.';
+                qrMessage.style.color = 'green';
+            } else {
+                console.error("QR Code Container nicht gefunden oder URL fehlt (user.html).");
+                qrMessage.innerText = 'Fehler: QR Code konnte nicht angezeigt werden.';
+                qrMessage.style.color = 'red';
+            }
+
+        } catch (error) {
+            console.error('Fehler beim Generieren des user.html QR-Codes:', error);
+            qrCodeContainer.innerHTML = '';
+            qrMessage.innerText = `Fehler: ${error.message}.`;
+            qrMessage.style.color = 'red';
+        }
+    }
+
+
+    document.addEventListener('DOMContentLoaded', () => {
+        connect();
+        loadInitialTeilnehmer();
+        generateUserHtmlQrCode(); // <-- NEUER AUFRUF beim Laden der Seite
+    });
 </script>
 </body>
 </html>

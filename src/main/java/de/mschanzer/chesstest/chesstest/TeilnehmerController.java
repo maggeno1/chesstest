@@ -2,13 +2,16 @@ package de.mschanzer.chesstest.chesstest;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.handler.annotation.MessageMapping; // Wichtig: Neue Annotation
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.transaction.annotation.Transactional; // Für Transaktionen
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 
 @RestController
 @RequestMapping("/api/teilnehmer")
@@ -22,7 +25,7 @@ public class TeilnehmerController {
     public TeilnehmerController(TeilnehmerRepository teilnehmerRepository, SimpMessagingTemplate messagingTemplate, TokenService tokenService) {
         this.teilnehmerRepository = teilnehmerRepository;
         this.messagingTemplate = messagingTemplate;
-        this.tokenService = tokenService; // NEU: Zuweisung
+        this.tokenService = tokenService;
     }
 
     /**
@@ -36,7 +39,7 @@ public class TeilnehmerController {
         return teilnehmerRepository.findAll();
     }
 
-    // NEU: Endpunkt zum Abrufen aller einzigartigen Vereinsnamen
+    // Endpunkt zum Abrufen aller einzigartigen Vereinsnamen
     @GetMapping("/vereine")
     @Transactional(readOnly = true)
     public ResponseEntity<List<String>> getDistinctVereinNames() {
@@ -47,8 +50,6 @@ public class TeilnehmerController {
     @PostMapping("/generate-token")
     public ResponseEntity<RegistrationToken> generateToken() {
         RegistrationToken newToken = tokenService.generateNewToken();
-        // Optional: Senden des neuen Tokens über WebSockets, falls Admin-Dashboard es live sehen soll
-        // messagingTemplate.convertAndSend("/topic/newTokens", newToken);
         return ResponseEntity.status(HttpStatus.CREATED).body(newToken);
     }
 
@@ -60,80 +61,63 @@ public class TeilnehmerController {
         return ResponseEntity.ok(Map.of("isValid", isValidAndUnused));
     }
 
-    /**
-     * Aktualisiert den Status (Startgebühr, Anwesenheit, Kommentar) eines einzelnen Teilnehmers.
-     * Endpunkt: PUT /api/teilnehmer/{id}
-     * Kann vom Tablet-Frontend oder Admin-Dashboard verwendet werden.
-     */
     @PutMapping("/{id}")
-    public ResponseEntity<Teilnehmer> updateTeilnehmerStatus(@PathVariable Long id, @RequestBody Map<String, Object> updates) {
+    public ResponseEntity<Teilnehmer> updateTeilnehmer(@PathVariable Long id, @RequestBody Map<String, Object> updates) {
         Optional<Teilnehmer> optionalTeilnehmer = teilnehmerRepository.findById(id);
 
         if (optionalTeilnehmer.isEmpty()) {
-            return ResponseEntity.notFound().build(); // 404 Not Found, wenn Teilnehmer nicht existiert
+            return ResponseEntity.notFound().build();
         }
 
         Teilnehmer teilnehmer = optionalTeilnehmer.get();
 
-        // Prüfe und wende die Updates an
-        // KORREKTUR: Schlüsselnamen wurden an camelCase vom Frontend angepasst
-        if (updates.containsKey("startgebuehrBezahlt")) { // Von "startgebuehr_bezahlt" zu "startgebuehrBezahlt"
+        if (updates.containsKey("startgebuehrBezahlt")) {
             teilnehmer.setStartgebuehrBezahlt((Boolean) updates.get("startgebuehrBezahlt"));
         }
-        if (updates.containsKey("anwesenheitsStatus")) { // Von "anwesenheits_status" zu "anwesenheitsStatus"
+        if (updates.containsKey("startgebuehrMussNichtZahlen")) {
+            teilnehmer.setStartgebuehrMussNichtZahlen((Boolean) updates.get("startgebuehrMussNichtZahlen"));
+        }
+        if (updates.containsKey("anwesenheitsStatus")) {
             teilnehmer.setAnwesenheitsStatus((String) updates.get("anwesenheitsStatus"));
         }
-        if (updates.containsKey("kommentar")) { // Dieser war bereits korrekt
+        if (updates.containsKey("kommentar")) {
             teilnehmer.setKommentar((String) updates.get("kommentar"));
         }
 
         Teilnehmer updatedTeilnehmer = teilnehmerRepository.save(teilnehmer);
-
-        // Senden des Updates an alle abonnierten WebSocket-Clients (Admin-Dashboard)
         messagingTemplate.convertAndSend("/topic/teilnehmerUpdates", updatedTeilnehmer);
 
-        return ResponseEntity.ok(updatedTeilnehmer); // 200 OK mit dem aktualisierten Teilnehmer
+        return ResponseEntity.ok(updatedTeilnehmer);
     }
 
-    /**
-     * Aktualisiert die Startgebühr für alle anwesenden Spieler eines bestimmten Vereins.
-     * Endpunkt: PUT /api/teilnehmer/verein/startgebuehr
-     * Beispiel für eine spezifische Admin-Funktion.
-     */
     @PutMapping("/verein/startgebuehr")
-    @Transactional // Stellt sicher, dass alle Datenbankoperationen atomar sind
-    public ResponseEntity<String> updateVereinStartgebuehr(@RequestBody Map<String, Object> request) { // Map<String, String> zu Map<String, Object>
+    @Transactional
+    public ResponseEntity<String> updateVereinStartgebuehr(@RequestBody Map<String, Object> request) {
         String verein = (String) request.get("verein");
-        // NEU: Den 'bezahlt'-Status aus dem Request-Body lesen
-        boolean bezahlt = true; // Standardwert
+        boolean bezahlt = true;
         if (request.containsKey("bezahlt")) {
             Object bezahltValue = request.get("bezahlt");
             if (bezahltValue instanceof Boolean) {
                 bezahlt = (Boolean) bezahltValue;
-            } else if (bezahltValue instanceof String) { // Falls Frontend "true"/"false" als String sendet
+            } else if (bezahltValue instanceof String) {
                 bezahlt = Boolean.parseBoolean((String) bezahltValue);
             }
         }
-
 
         if (verein == null || verein.isEmpty()) {
             return ResponseEntity.badRequest().body("Vereinsname fehlt im Request-Body.");
         }
 
-        // Finde alle anwesenden Mitglieder dieses Vereins
         List<Teilnehmer> anwesendeVereinsmitglieder = teilnehmerRepository.findByVereinAndAnwesenheitsStatus(verein, "anwesend");
 
         if (anwesendeVereinsmitglieder.isEmpty()) {
             return ResponseEntity.ok(String.format("Keine anwesenden Spieler für Verein '%s' gefunden.", verein));
         }
 
-        // Aktualisiere die Startgebühr für jedes Mitglied
         for (Teilnehmer t : anwesendeVereinsmitglieder) {
-            t.setStartgebuehrBezahlt(bezahlt); // KORREKTUR: Setze Startgebühr basierend auf dem 'bezahlt'-Parameter
-            teilnehmerRepository.save(t); // Speichere den aktualisierten Teilnehmer
-
-            // Senden des Updates für jeden einzelnen aktualisierten Teilnehmer an den Admin
-            // Dies stellt sicher, dass das Dashboard für jeden aktualisierten Spieler ein Update erhält.
+            t.setStartgebuehrBezahlt(bezahlt);
+            t.setStartgebuehrMussNichtZahlen(false);
+            teilnehmerRepository.save(t);
             messagingTemplate.convertAndSend("/topic/teilnehmerUpdates", t);
         }
 
@@ -141,45 +125,35 @@ public class TeilnehmerController {
                 anwesendeVereinsmitglieder.size(), verein, bezahlt ? "bezahlt" : "nicht bezahlt"));
     }
 
-    /**
-     * Fügt einen neuen Teilnehmer zur Datenbank hinzu und validiert einen Token.
-     * Endpunkt: POST /api/teilnehmer
-     * Wird vom Formular auf add_teilnehmer.html verwendet.
-     * Erfordert jetzt einen gültigen, unbenutzten Token.
-     */
     @PostMapping
     public ResponseEntity<Teilnehmer> addTeilnehmer(@RequestBody Teilnehmer newTeilnehmer,
-                                                    @RequestParam(value = "token", required = false) String tokenString) { // NEU: Token als RequestParam
-
-        // NEU: Token-Validierung
+                                                    @RequestParam(value = "token", required = false) String tokenString) {
         if (tokenString == null || tokenString.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null); // Token fehlt
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
         }
 
         Optional<RegistrationToken> optionalToken = tokenService.validateToken(tokenString);
         if (optionalToken.isEmpty()) {
-            // Token ist ungültig oder bereits verwendet
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(null); // Oder HttpStatus.FORBIDDEN
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(null);
         }
 
-        // Token ist gültig und unbenutzt, fahre mit der Teilnehmererstellung fort
         RegistrationToken validToken = optionalToken.get();
 
-        // Sicherstellen, dass keine ID vom Client gesendet wird oder sie auf null setzen,
-        // damit die Datenbank eine neue ID generiert.
         if (newTeilnehmer.getId() != null) {
             newTeilnehmer.setId(null);
         }
 
-        // Setzen von Standardwerten, falls diese vom Frontend nicht explizit gesetzt werden
         if (newTeilnehmer.getAnwesenheitsStatus() == null || newTeilnehmer.getAnwesenheitsStatus().isEmpty()) {
             newTeilnehmer.setAnwesenheitsStatus("nicht anwesend");
         }
         if (newTeilnehmer.getKommentar() == null) {
             newTeilnehmer.setKommentar("");
         }
+        if (!newTeilnehmer.isStartgebuehrBezahlt() && !newTeilnehmer.isStartgebuehrMussNichtZahlen()) {
+            newTeilnehmer.setStartgebuehrBezahlt(false);
+            newTeilnehmer.setStartgebuehrMussNichtZahlen(false);
+        }
 
-        // Grundlegende Validierung der erforderlichen Felder
         if (newTeilnehmer.getVerein() == null || newTeilnehmer.getVerein().trim().isEmpty() ||
                 newTeilnehmer.getName() == null || newTeilnehmer.getName().trim().isEmpty() ||
                 newTeilnehmer.getAltersklasse() == null || newTeilnehmer.getAltersklasse().trim().isEmpty()) {
@@ -187,19 +161,34 @@ public class TeilnehmerController {
         }
 
         Teilnehmer savedTeilnehmer = teilnehmerRepository.save(newTeilnehmer);
-
-        // NEU: Token nach erfolgreicher Verwendung deaktivieren
         tokenService.invalidateToken(validToken);
 
-        // Debug-Ausgabe hinzufügen:
-        System.out.println("DEBUG: Sende WebSocket-Nachricht für verwendeten Token: " + validToken.getToken());
-
-        // Optional: Senden des deaktivierten Tokens über WebSockets, falls Admin-Dashboard es live sehen soll
-        messagingTemplate.convertAndSend("/topic/tokenUsed", validToken.getToken()); // Sende nur den Token-String
-
+        messagingTemplate.convertAndSend("/topic/tokenUsed", validToken.getToken());
         messagingTemplate.convertAndSend("/topic/teilnehmerUpdates", savedTeilnehmer);
         return ResponseEntity.status(201).body(savedTeilnehmer);
     }
 
+    @GetMapping("/server-ip")
+    public ResponseEntity<String> getServerIpAddress() {
+        try {
+            String ipAddress = InetAddress.getLocalHost().getHostAddress();
+            return ResponseEntity.ok(ipAddress);
+        } catch (UnknownHostException e) {
+            System.err.println("Fehler beim Ermitteln der Server-IP: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Could not determine server IP address.");
+        }
+    }
 
+    /**
+     * NEU: Empfängt die Nachricht, dass ein Token gescannt wurde.
+     * Sendet dies an ein öffentliches WebSocket-Topic, damit Admins darauf reagieren können.
+     * Die URL für diesen Endpunkt ist: /app/tokenScanned (aus dem Frontend kommend)
+     * Und wird an /topic/tokenScannedStatus (für alle Abonnenten) weitergeleitet.
+     */
+    @MessageMapping("/tokenScanned") // Dies ist der Zielpfad von `stompClient.send()` im Frontend
+    public void handleTokenScanned(String tokenString) {
+        System.out.println("Token gescannt: " + tokenString);
+        // Sende die Info an alle Clients, die /topic/tokenScannedStatus abonnieren
+        messagingTemplate.convertAndSend("/topic/tokenScannedStatus", tokenString);
+    }
 }

@@ -34,4 +34,20 @@ public class Teilnehmer {
         this.startgebuehrMussNichtZahlen = false;
         this.anwesenheitsStatus = "nicht anwesend";
     }
+
+    public boolean isStartgebuehrBezahlt() {
+        return startgebuehrBezahlt;
+    }
+
+    public void setStartgebuehrBezahlt(boolean startgebuehrBezahlt) {
+        this.startgebuehrBezahlt = startgebuehrBezahlt;
+    }
+
+    public boolean isStartgebuehrMussNichtZahlen() { // <-- Wichtig: is-Präfix für boolean-Getter
+        return startgebuehrMussNichtZahlen;
+    }
+
+    public void setStartgebuehrMussNichtZahlen(boolean startgebuehrMussNichtZahlen) {
+        this.startgebuehrMussNichtZahlen = startgebuehrMussNichtZahlen;
+    }
 }

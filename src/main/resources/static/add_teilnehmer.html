@@ -3,36 +3,40 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Neuen Teilnehmer hinzufügen</title>
+    <title>Neuen Teilnehmer registrieren</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; }
         .container {
             background-color: #fff;
-            padding: 20px;
+            padding: 30px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
             max-width: 500px;
             margin: 50px auto;
         }
         h1 { text-align: center; color: #333; }
-        label { display: block; margin-bottom: 8px; font-weight: bold; }
-        input[type="text"], select { /* select hinzugefügt */
+        label { display: block; margin-bottom: 8px; font-weight: bold; color: #555; }
+        /* input[type="text"], input[type="number"], select { */ /* Diese Zeile anpassen */
+        input[type="text"], input[type="number"], select {
             width: calc(100% - 20px);
             padding: 10px;
-            margin-bottom: 15px;
+            margin-bottom: 20px;
             border: 1px solid #ddd;
             border-radius: 4px;
+            box-sizing: border-box;
         }
         button {
-            width: 100%;
-            padding: 10px;
             background-color: #007bff;
             color: white;
+            padding: 12px 20px;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-size: 16px;
-            margin-top: 10px;
+            width: 100%;
         }
         button:hover {
             background-color: #0056b3;
@@ -41,194 +45,178 @@
             margin-top: 20px;
             padding: 10px;
             border-radius: 4px;
-            display: none; /* Standardmäßig versteckt */
+            text-align: center;
         }
         .message.success {
             background-color: #d4edda;
             color: #155724;
-            border: 1px solid #c3e6cb;
+            border-color: #c3e6cb;
         }
         .message.error {
             background-color: #f8d7da;
             color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        .token-info {
-            text-align: center;
-            margin-top: 20px;
-            padding: 15px;
-            background-color: #e9ecef;
-            border-radius: 8px;
-            color: #495057;
-        }
-        .token-info p {
-            margin: 5px 0;
-            font-size: 1.1em;
-        }
-        .token-info strong {
-            color: #007bff;
-            font-size: 1.2em;
-        }
-        .qr-code-container {
-            margin-top: 20px;
-            text-align: center;
-        }
-        .hidden {
-            display: none;
+            border-color: #f5c6cb;
         }
     </style>
 </head>
 <body>
 <div class="container">
-    <h1>Neuen Teilnehmer hinzufügen</h1>
-    <div id="message" class="message"></div>
-
-    <div class="token-info">
-        <p>Aktueller Anmelde-Token:</p>
-        <strong id="displayToken">Laden...</strong>
-    </div>
-
-    <form id="addTeilnehmerForm">
+    <h1>Neuen Teilnehmer registrieren</h1>
+    <div id="tokenStatus" class="message"></div>
+    <form id="registrationForm">
         <label for="verein">Verein:</label>
-        <input type="text" id="verein" name="verein" list="vereineList" required>
-        <datalist id="vereineList"></datalist> <label for="name">Name:</label>
+        <input type="text" id="verein" name="verein" list="vereine-datalist" required>
+        <datalist id="vereine-datalist">
+        </datalist>
+
+        <label for="name">Name:</label>
         <input type="text" id="name" name="name" required>
 
         <label for="altersklasse">Altersklasse:</label>
         <select id="altersklasse" name="altersklasse" required>
-            <option value="">Bitte auswählen</option>
+            <option value="">Bitte Altersklasse auswählen</option>
             <option value="U8">U8</option>
             <option value="U10">U10</option>
             <option value="U12">U12</option>
             <option value="U14">U14</option>
             <option value="U16">U16</option>
             <option value="U18">U18</option>
-            <option value="Erwachsene">Erwachsene</option>
+            <option value="Erwachsen">Erwachsen</option>
         </select>
 
         <label for="kommentar">Kommentar (optional):</label>
         <input type="text" id="kommentar" name="kommentar">
 
-        <button type="submit">Teilnehmer hinzufügen</button>
+        <button type="submit">Registrieren</button>
     </form>
+    <div id="responseMessage" class="message"></div>
 </div>
 
 <script>
-    document.addEventListener('DOMContentLoaded', async () => {
-        const displayTokenDiv = document.getElementById('displayToken');
+    let stompClient = null;
+    let registrationToken = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
         const urlParams = new URLSearchParams(window.location.search);
-        const token = urlParams.get('token');
+        registrationToken = urlParams.get('token');
+        const tokenStatusDiv = document.getElementById('tokenStatus');
 
-        if (token) {
-            displayTokenDiv.innerText = token;
-            localStorage.setItem('teilnehmerAuthToken', token);
-        } else {
-            displayTokenDiv.innerText = 'Kein Token gefunden. Anmeldung nicht möglich.';
-            document.getElementById('addTeilnehmerForm').style.display = 'none';
-            showMessage('Fehler: Zum Hinzufügen von Teilnehmern wird ein gültiger Token benötigt.', 'error');
+        if (!registrationToken) {
+            tokenStatusDiv.className = 'message error';
+            tokenStatusDiv.innerText = 'Fehler: Kein Registrierungstoken in der URL gefunden.';
+            document.getElementById('registrationForm').style.display = 'none';
+            return;
         }
 
-        async function loadVereineSuggestions() {
-            try {
-                const response = await fetch('/api/teilnehmer/vereine');
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                const vereine = await response.json();
-                const datalist = document.getElementById('vereineList');
-                datalist.innerHTML = '';
-                vereine.forEach(verein => {
-                    const option = document.createElement('option');
-                    option.value = verein;
-                    datalist.appendChild(option);
-                });
-            } catch (error) {
-                console.error('Fehler beim Laden der Verein-Vorschläge:', error);
-            }
-        }
+        connectWebSocket(); // WebSocket-Verbindung herstellen
+        validateToken(registrationToken); // Token sofort validieren und Status anzeigen
+        loadVereinNames(); // Laden der Vereinsnamen für die Datalist
 
-        if (token) {
-            loadVereineSuggestions();
-        }
-
-        const addTeilnehmerForm = document.getElementById('addTeilnehmerForm');
-        addTeilnehmerForm.addEventListener('submit', async (event) => {
+        document.getElementById('registrationForm').addEventListener('submit', async (event) => {
             event.preventDefault();
 
-            const verein = document.getElementById('verein').value.trim();
-            const name = document.getElementById('name').value.trim();
-            const altersklasse = document.getElementById('altersklasse').value;
-            const kommentar = document.getElementById('kommentar').value.trim();
-
-            if (!verein || !name || !altersklasse) {
-                showMessage('Bitte füllen Sie alle erforderlichen Felder (Verein, Name, Altersklasse) aus.', 'error');
-                return;
-            }
-            if (altersklasse === "") {
-                showMessage('Bitte wählen Sie eine Altersklasse aus.', 'error');
-                return;
-            }
-
-            const newTeilnehmer = {
-                verein: verein,
-                name: name,
-                altersklasse: altersklasse,
-                kommentar: kommentar
+            const formData = {
+                verein: document.getElementById('verein').value, // liest den Wert aus dem Textfeld
+                name: document.getElementById('name').value,
+                altersklasse: document.getElementById('altersklasse').value,
+                kommentar: document.getElementById('kommentar').value || ""
             };
 
+            const responseMessageDiv = document.getElementById('responseMessage');
+            responseMessageDiv.className = 'message';
+            responseMessageDiv.innerText = 'Registriere Teilnehmer...';
+
             try {
-                const response = await fetch(`/api/teilnehmer?token=${token}`, { // Token als Query-Parameter senden
+                const response = await fetch(`/api/teilnehmer?token=${registrationToken}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify(newTeilnehmer)
+                    body: JSON.stringify(formData)
                 });
 
                 if (response.ok) {
-                    const data = await response.json(); // Hier sollte immer JSON kommen
-                    showMessage(`Teilnehmer "${data.name}" erfolgreich hinzugefügt!`, 'success');
-                    document.getElementById('addTeilnehmerForm').reset();
-                    loadVereineSuggestions();
+                    const data = await response.json();
+                    responseMessageDiv.className = 'message success';
+                    responseMessageDiv.innerText = `Teilnehmer ${data.name} erfolgreich registriert!`;
+                    document.getElementById('registrationForm').reset();
+                    // Wichtig: Nach dem Hinzufügen eines Teilnehmers die Liste der Vereine neu laden,
+                    // falls ein neuer Verein eingegeben wurde.
+                    loadVereinNames();
                 } else {
-                    // NEU: Fehlerbehandlung, wenn der Server einen leeren Body zurückgibt
-                    let errorMessage = `Fehler beim Hinzufügen des Teilnehmers: ${response.statusText || 'Unbekannter Fehler'}`;
-
-                    if (response.status === 400) {
-                        errorMessage = "Fehler: Die Eingabedaten sind unvollständig oder ungültig.";
-                    } else if (response.status === 401 || response.status === 403) {
-                        errorMessage = "Fehler: Der Token ist ungültig oder abgelaufen. Bitte generieren Sie einen neuen Token im Admin-Dashboard.";
-                    } else if (response.status === 404) {
-                        errorMessage = "Fehler: Endpunkt nicht gefunden.";
-                    }
-                    // Wenn der Server einen JSON-Fehler-Body senden würde, könnte man diesen hier parsen:
-                    // try {
-                    //     const errorData = await response.json();
-                    //     if (errorData.message) {
-                    //         errorMessage = `Fehler beim Hinzufügen des Teilnehmers: ${errorData.message}`;
-                    //     }
-                    // } catch (jsonParseError) {
-                    //     console.warn("Antwort war kein gültiges JSON, verwende Statusmeldung.");
-                    // }
-
-                    showMessage(errorMessage, 'error');
+                    const errorText = await response.text();
+                    responseMessageDiv.className = 'message error';
+                    responseMessageDiv.innerText = `Fehler bei der Registrierung: ${errorText || response.statusText}. Ist der Token noch gültig?`;
                 }
             } catch (error) {
-                console.error('Netzwerkfehler:', error);
-                showMessage('Ein Netzwerkfehler ist aufgetreten. Bitte versuchen Sie es später erneut.', 'error');
+                responseMessageDiv.className = 'message error';
+                responseMessageDiv.innerText = `Ein Netzwerkfehler ist aufgetreten: ${error.message}`;
+                console.error('Fehler beim Senden der Daten:', error);
             }
         });
-
-        function showMessage(text, type) {
-            const messageDiv = document.getElementById('message');
-            messageDiv.innerText = text;
-            messageDiv.className = `message ${type}`;
-            messageDiv.style.display = 'block';
-            setTimeout(() => {
-                messageDiv.style.display = 'none';
-            }, 5000);
-        }
     });
+
+    function connectWebSocket() {
+        let socket = new SockJS('/ws');
+        stompClient = Stomp.over(socket);
+        stompClient.connect({}, function (frame) {
+            console.log('Verbunden mit WebSocket: ' + frame);
+            if (registrationToken) {
+                stompClient.send("/app/tokenScanned", {}, registrationToken);
+                console.log(`Token ${registrationToken} als gescannt gesendet.`);
+            }
+        }, function(error) {
+            console.error('STOMP Fehler in add_teilnehmer.html:', error);
+            setTimeout(connectWebSocket, 5000);
+        });
+    }
+
+    async function validateToken(token) {
+        const tokenStatusDiv = document.getElementById('tokenStatus');
+        try {
+            const response = await fetch(`/api/teilnehmer/token-status/${token}`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            if (data.isValid) {
+                tokenStatusDiv.className = 'message success';
+                tokenStatusDiv.innerText = 'Token ist gültig. Bitte registrieren Sie den Teilnehmer.';
+                document.getElementById('registrationForm').style.display = 'block';
+            } else {
+                tokenStatusDiv.className = 'message error';
+                tokenStatusDiv.innerText = 'Fehler: Dieser Registrierungstoken ist ungültig oder wurde bereits verwendet.';
+                document.getElementById('registrationForm').style.display = 'none';
+            }
+        } catch (error) {
+            tokenStatusDiv.className = 'message error';
+            tokenStatusDiv.innerText = `Fehler bei der Token-Validierung: ${error.message}`;
+            document.getElementById('registrationForm').style.display = 'none';
+            console.error('Token-Validierungsfehler:', error);
+        }
+    }
+
+    // Funktion: Lädt die Vereinsnamen vom Backend und füllt die Datalist
+    async function loadVereinNames() {
+        try {
+            const response = await fetch('/api/teilnehmer/vereine');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const vereine = await response.json();
+            const datalistElement = document.getElementById('vereine-datalist');
+            datalistElement.innerHTML = ''; // Vorhandene Optionen leeren
+
+            vereine.forEach(verein => {
+                const option = document.createElement('option');
+                option.value = verein; // Der Wert der Option ist der Vorschlag
+                datalistElement.appendChild(option);
+            });
+        } catch (error) {
+            console.error("Fehler beim Laden der Vereinsnamen für Datalist:", error);
+            // Optional: Nachricht an den Benutzer, wenn die Vorschläge nicht geladen werden konnten
+        }
+    }
 </script>
 </body>
 </html>
