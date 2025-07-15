@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schachturnier Teilnehmerliste</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <script src="/js/qrcode.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .present { background-color: #e6ffe6; } /* Grün für anwesend */
+        .absent { background-color: #fff0f0; }  /* Rot für abgesagt */
+        .paid { color: green; font-weight: bold; }
+        .not-paid { color: red; }
+        .update-button {
+            background-color: #4CAF50; /* Green */
+            color: white;
+            padding: 5px 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .update-button:hover {
+            background-color: #45a049;
+        }
+        .club-update-section, .token-generation-section {
+            margin-top: 30px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        .club-update-section label, .club-update-section select, .club-update-section button,
+        .token-generation-section button {
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        .club-update-section select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 250px;
+        }
+        /* Styles für Token und QR-Code */
+        #generatedTokenDisplay {
+            margin-top: 10px;
+            padding: 10px;
+            border: 1px solid #a2a2a2;
+            background-color: #e2e2e2;
+            font-family: monospace;
+            word-break: break-all;
+        }
+        /* Das ist der Stil für das div, das den QR-Code enthält */
+        #qrCodeContainer {
+            margin-top: 15px;
+            border: 1px solid #ccc;
+            padding: 5px;
+            display: inline-block;
+        }
+        #qrCodeContainer.hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+<h1>Teilnehmerliste</h1>
+
+<p>Hier sehen Sie die aktuelle Liste aller Teilnehmer und können bestimmte Informationen aktualisieren.</p>
+
+<div class="club-update-section">
+    <h2>Startgebühr für Verein aktualisieren</h2>
+    <label for="vereinNameSelect">Vereinsname auswählen:</label>
+    <select id="vereinNameSelect">
+        <option value="">-- Verein auswählen --</option>
+    </select>
+    <button onclick="updateClubStartgebuehr(true)">Alle Anwesenden des Vereins auf 'Bezahlt' setzen</button>
+    <button onclick="updateClubStartgebuehr(false)">Alle Anwesenden des Vereins auf 'Nicht Bezahlt' setzen</button>
+    <p id="clubUpdateMessage" style="margin-top: 10px;"></p>
+</div>
+
+<table>
+    <thead>
+    <tr>
+        <th>ID</th>
+        <th>Verein</th>
+        <th>Name</th>
+        <th>Altersklasse</th>
+        <th>Startgebühr Bezahlt</th>
+        <th>Anwesenheit</th>
+        <th>Kommentar</th>
+        <th>Aktion</th>
+    </tr>
+    </thead>
+    <tbody id="teilnehmer-list-body">
+    </tbody>
+</table>
+
+<div class="token-generation-section">
+    <h2>Registrierungstoken generieren</h2>
+    <button onclick="generateAndDisplayToken()">Neuen Token generieren</button>
+    <div id="tokenOutput">
+        <p>Generierter Token:</p>
+        <div id="generatedTokenDisplay"></div>
+        <div id="qrCodeContainer" class="hidden"></div>
+        <p id="tokenMessage" style="margin-top: 5px; color: green;"></p>
+    </div>
+</div>
+
+<script>
+    let stompClient = null;
+    const tableBody = document.getElementById('teilnehmer-list-body');
+    let currentGeneratedToken = null; // Speichert den zuletzt generierten Token
+
+    // Funktion zum Herstellen der WebSocket-Verbindung
+    function connect() {
+        let socket = new SockJS('/ws');
+        stompClient = Stomp.over(socket);
+        stompClient.connect({}, function (frame) {
+            console.log('Verbunden: ' + frame);
+            stompClient.subscribe('/topic/teilnehmerUpdates', function (message) {
+                const updatedTeilnehmer = JSON.parse(message.body);
+                console.log('Update/Neuer Teilnehmer erhalten:', updatedTeilnehmer);
+                upsertTeilnehmerRow(updatedTeilnehmer);
+                loadVereinNames(); // Vereinsnamen nach einem Update neu laden
+            });
+            // NEU: Abonniere Topic für verwendete Tokens
+            stompClient.subscribe('/topic/tokenUsed', function (message) {
+                const usedToken = message.body;
+                console.log('Token als verwendet markiert erhalten:', usedToken);
+                // Wenn der verwendete Token der ist, den wir gerade anzeigen, verberge den QR-Code
+                if (currentGeneratedToken && currentGeneratedToken === usedToken) {
+                    const qrcodeDiv = document.getElementById('qrCodeContainer'); // Korrigierte ID
+                    qrcodeDiv.classList.add('hidden');
+                    // Sicherstellen, dass display auf none gesetzt wird, falls CSS überschrieben wird
+                    qrcodeDiv.style.display = 'none';
+                    document.getElementById('tokenMessage').innerText = `Token "${usedToken}" wurde verwendet und ist jetzt inaktiv.`;
+                    document.getElementById('tokenMessage').style.color = 'orange';
+                    currentGeneratedToken = null; // Token ist nun "verbraucht"
+                }
+            });
+        }, function(error) {
+            console.error('STOMP Fehler:', error);
+            setTimeout(connect, 5000);
+        });
+    }
+
+    function upsertTeilnehmerRow(data) {
+        const rowId = `teilnehmer-${data.id}`;
+        let row = document.getElementById(rowId);
+
+        if (!row) {
+            row = document.createElement('tr');
+            row.id = rowId;
+            tableBody.appendChild(row);
+            for (let i = 0; i < 8; i++) {
+                row.appendChild(document.createElement('td'));
+            }
+            console.log(`Neue Zeile für Teilnehmer-ID ${data.id} hinzugefügt.`);
+        }
+
+        row.children[0].innerText = data.id;
+        row.children[1].innerText = data.verein;
+        row.children[2].innerText = data.name;
+        row.children[3].innerText = data.altersklasse;
+
+        let startgebuehrCell = row.children[4];
+        if (!startgebuehrCell.querySelector('select')) {
+            startgebuehrCell.innerHTML = `
+                <select id="startgebuehr-${data.id}">
+                    <option value="true">Ja</option>
+                    <option value="false">Nein</option>
+                </select>
+            `;
+        }
+        startgebuehrCell.querySelector('select').value = data.startgebuehrBezahlt ? 'true' : 'false';
+        startgebuehrCell.className = data.startgebuehrBezahlt ? 'paid' : 'not-paid';
+
+        let anwesenheitCell = row.children[5];
+        if (!anwesenheitCell.querySelector('select')) {
+            anwesenheitCell.innerHTML = `
+                <select id="anwesenheit-${data.id}">
+                    <option value="anwesend">anwesend</option>
+                    <option value="nicht anwesend">nicht anwesend</option>
+                    <option value="abgesagt">abgesagt</option>
+                </select>
+            `;
+        }
+        anwesenheitCell.querySelector('select').value = data.anwesenheitsStatus;
+        row.className = '';
+        if (data.anwesenheitsStatus === 'anwesend') {
+            row.classList.add('present');
+        } else if (data.anwesenheitsStatus === 'abgesagt') {
+            row.classList.add('absent');
+        }
+
+        let kommentarCell = row.children[6];
+        if (!kommentarCell.querySelector('input')) {
+            kommentarCell.innerHTML = `<input type="text" id="kommentar-${data.id}" value="${data.kommentar || ''}" style="width: 90%;">`;
+        } else {
+            kommentarCell.querySelector('input').value = data.kommentar || '';
+        }
+
+        let actionCell = row.children[7];
+        if (!actionCell.querySelector('button')) {
+            actionCell.innerHTML = `<button class="update-button" onclick="updateTeilnehmer(${data.id})">Aktualisieren</button>`;
+        }
+    }
+
+    async function loadInitialTeilnehmer() {
+        try {
+            const response = await fetch('/api/teilnehmer');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const teilnehmerList = await response.json();
+            tableBody.innerHTML = '';
+
+            teilnehmerList.forEach(t => {
+                upsertTeilnehmerRow(t);
+            });
+        } catch (error) {
+            console.error("Fehler beim Laden der Teilnehmerdaten:", error);
+            tableBody.innerHTML = `<tr><td colspan="8">Fehler beim Laden der Daten. Bitte versuchen Sie es später erneut.</td></tr>`;
+        }
+    }
+
+    async function loadVereinNames() {
+        try {
+            const response = await fetch('/api/teilnehmer/vereine');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const vereine = await response.json();
+            const selectElement = document.getElementById('vereinNameSelect');
+            selectElement.innerHTML = '<option value="">-- Verein auswählen --</option>';
+
+            vereine.forEach(verein => {
+                const option = document.createElement('option');
+                option.value = verein;
+                option.innerText = verein;
+                selectElement.appendChild(option);
+            });
+        } catch (error) {
+            console.error("Fehler beim Laden der Vereinsnamen:", error);
+        }
+    }
+
+    async function updateTeilnehmer(id) {
+        const startgebuehrSelect = document.getElementById(`startgebuehr-${id}`);
+        const anwesenheitSelect = document.getElementById(`anwesenheit-${id}`);
+        const kommentarInput = document.getElementById(`kommentar-${id}`);
+
+        const updates = {
+            startgebuehrBezahlt: startgebuehrSelect.value === 'true',
+            anwesenheitsStatus: anwesenheitSelect.value,
+            kommentar: kommentarInput.value
+        };
+
+        try {
+            const response = await fetch(`/api/teilnehmer/${id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(updates)
+            });
+
+            if (!response.ok) {
+                let errorDetails = `Status: ${response.status}`;
+                try {
+                    const errorJson = await response.json();
+                    errorDetails += `, Details: ${errorJson.message || JSON.stringify(errorJson)}`;
+                } catch (jsonError) {
+                    errorDetails += `, Details: ${response.statusText}`;
+                }
+                throw new Error(`HTTP error! ${errorDetails}`);
+            }
+            const updatedTeilnehmer = await response.json();
+            console.log('Teilnehmer aktualisiert:', updatedTeilnehmer);
+        } catch (error) {
+            console.error('Fehler beim Aktualisieren des Teilnehmers:', error);
+            alert(`Fehler beim Aktualisieren des Teilnehmers: ${error.message}. Bitte versuchen Sie es erneut.`);
+        }
+    }
+
+    async function updateClubStartgebuehr(bezahlt) {
+        const vereinName = document.getElementById('vereinNameSelect').value.trim();
+        const messageElement = document.getElementById('clubUpdateMessage');
+
+        if (!vereinName) {
+            messageElement.style.color = 'red';
+            messageElement.innerText = 'Bitte wählen Sie einen Vereinsnamen aus der Liste aus.';
+            return;
+        }
+
+        try {
+            const bodyData = {
+                verein: vereinName,
+                bezahlt: bezahlt
+            };
+
+            const response = await fetch(`/api/teilnehmer/verein/startgebuehr`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(bodyData)
+            });
+
+            if (!response.ok) {
+                let errorDetails = `Status: ${response.status}`;
+                try {
+                    const errorJson = await response.json();
+                    errorDetails += `, Details: ${errorJson.message || JSON.stringify(errorJson)}`;
+                } catch (jsonError) {
+                    errorDetails += `, Details: ${response.statusText}`;
+                }
+                throw new Error(`HTTP error! ${errorDetails}`);
+            }
+            const responseText = await response.text();
+            messageElement.style.color = 'green';
+            messageElement.innerText = responseText;
+        } catch (error) {
+            console.error('Fehler beim Aktualisieren der Vereins-Startgebühr:', error);
+            messageElement.style.color = 'red';
+            messageElement.innerText = `Fehler beim Aktualisieren der Startgebühr für den Verein: ${error.message}. Bitte versuchen Sie es erneut.`;
+        }
+    }
+
+   async function generateAndDisplayToken() {
+    const tokenDisplay = document.getElementById('generatedTokenDisplay');
+    const qrcodeContainer = document.getElementById('qrCodeContainer');
+    const tokenMessage = document.getElementById('tokenMessage');
+
+    tokenDisplay.innerText = 'Generiere Token...';
+    qrcodeContainer.innerHTML = '';
+    qrcodeContainer.classList.add('hidden');
+    tokenMessage.innerText = '';
+
+    try {
+        const response = await fetch('/api/teilnehmer/generate-token', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const tokenData = await response.json();
+        currentGeneratedToken = tokenData.token;
+        tokenDisplay.innerText = currentGeneratedToken;
+
+        const baseUrl = window.location.origin;
+        const addTeilnehmerUrl = `${baseUrl}/add_teilnehmer.html?token=${currentGeneratedToken}`;
+
+        console.log("URL für QR-Code:", addTeilnehmerUrl);
+        console.log("qrCodeContainer-Element:", qrcodeContainer);
+
+        console.log("Checking qrcode constants:");
+        console.log("qrcode.H:", typeof qrcode !== 'undefined' ? qrcode.H : 'qrcode object not defined');
+        console.log("qrcode.CorrectLevel:", typeof qrcode !== 'undefined' && typeof qrcode.CorrectLevel !== 'undefined' ? qrcode.CorrectLevel : 'qrcode.CorrectLevel not defined');
+        console.log("qrcode.CorrectLevel.H:", typeof qrcode !== 'undefined' && typeof qrcode.CorrectLevel !== 'undefined' && typeof qrcode.CorrectLevel.H !== 'undefined' ? qrcode.CorrectLevel.H : 'qrcode.CorrectLevel.H not defined');
+
+        if (qrcodeContainer && addTeilnehmerUrl) {
+            const qr = new qrcode(10, "H");
+            qr.addData(addTeilnehmerUrl, 'Byte');
+            qr.make();
+
+            const desiredTotalSize = 256;
+            const moduleCount = qr.getModuleCount();
+            const cellSize = Math.floor(desiredTotalSize / (moduleCount + 8));
+            const margin = 4 * cellSize;
+
+            const imgTag = qr.createImgTag(cellSize, margin);
+
+            const linkTag = document.createElement('a');
+            linkTag.href = addTeilnehmerUrl;
+            linkTag.target = "_blank";
+            linkTag.innerHTML = imgTag;
+
+            qrcodeContainer.innerHTML = '';
+            qrcodeContainer.appendChild(linkTag);
+
+            qrcodeContainer.style.width = `${desiredTotalSize}px`;
+            qrcodeContainer.style.height = `${desiredTotalSize}px`;
+            qrcodeContainer.style.display = 'block';
+            qrcodeContainer.style.margin = 'auto';
+            qrcodeContainer.classList.remove('hidden');
+
+            tokenMessage.innerText = 'Token generiert! Scanne den QR-Code oder klicke darauf, um einen Teilnehmer hinzuzufügen.';
+            tokenMessage.style.color = 'green';
+        } else {
+            console.error("QR Code Container nicht gefunden oder URL fehlt (innerhalb generateAndDisplayToken).");
+            tokenMessage.innerText = 'Fehler: QR Code konnte nicht angezeigt werden.';
+            tokenMessage.style.color = 'red';
+            qrcodeContainer.classList.add('hidden');
+        }
+
+    } catch (error) {
+        console.error('Fehler beim Generieren des Tokens:', error);
+        tokenDisplay.innerText = 'Fehler beim Generieren des Tokens.';
+        tokenMessage.innerText = `Fehler: ${error.message}.`;
+        tokenMessage.style.color = 'red';
+        currentGeneratedToken = null;
+        qrcodeContainer.classList.add('hidden');
+    }
+}
+
+    // DOMContentLoaded stellt sicher, dass das Script erst ausgeführt wird, wenn das HTML geladen ist
+    document.addEventListener('DOMContentLoaded', () => {
+        connect();
+        loadInitialTeilnehmer();
+        loadVereinNames();
+    });
+</script>
+</body>
+</html>

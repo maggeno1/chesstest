@@ -1,20 +1,63 @@
-<script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schachturnier Admin-Dashboard</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        /* Dies könnte auch in style.css sein */
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .paid { color: green; font-weight: bold; }
+        .not-paid { color: red; }
+        .present { background-color: #e6ffe6; }
+        .absent { background-color: #fff0f0; }
+    </style>
+</head>
+<body>
+<h1>Admin-Dashboard</h1>
+
+<table>
+    <thead>
+    <tr>
+        <th>ID</th>
+        <th>Verein</th>
+        <th>Name</th>
+        <th>Altersklasse</th>
+        <th>Startgebühr Bezahlt</th>
+        <th>Muss nicht zahlen</th>
+        <th>Anwesenheit</th>
+        <th>Kommentar</th>
+    </tr>
+    </thead>
+    <tbody id="teilnehmer-table-body">
+    </tbody>
+</table>
+
 <script>
     let stompClient = null;
+    const tableBody = document.getElementById('teilnehmer-table-body'); // <-- Holen Sie sich das tableBody Element einmal
 
     function connect() {
-        // Verbindet sich mit dem SockJS-Fallbacks und dem STOMP-Protokoll
-        let socket = new SockJS('/ws'); // Der im Spring Boot definierte Endpunkt
+        let socket = new SockJS('/ws');
         stompClient = Stomp.over(socket);
         stompClient.connect({}, function (frame) {
             console.log('Verbunden: ' + frame);
             // Abonnieren des Topics für Teilnehmer-Updates
             stompClient.subscribe('/topic/teilnehmerUpdates', function (message) {
                 const updatedTeilnehmer = JSON.parse(message.body);
-                console.log('Update erhalten:', updatedTeilnehmer);
-                updateTable(updatedTeilnehmer); // Funktion zur Aktualisierung der Tabelle
+                console.log('Update/Neuer Teilnehmer erhalten:', updatedTeilnehmer);
+                upsertTable(updatedTeilnehmer); // <-- Änderung: 'upsertTable' statt 'updateTable'
             });
+        }, function(error) {
+            console.error('STOMP Fehler:', error);
+            // Versuchen Sie, die Verbindung nach einer Verzögerung wiederherzustellen
+            setTimeout(connect, 5000); // Erneut verbinden in 5 Sekunden
         });
     }
 
@@ -25,35 +68,39 @@
         console.log("Getrennt");
     }
 
-    function updateTable(data) {
+    // <-- Neue/Geänderte Funktion zum Hinzufügen oder Aktualisieren
+    function upsertTable(data) {
         const rowId = `teilnehmer-${data.id}`;
         let row = document.getElementById(rowId);
 
         if (!row) {
-            // Wenn die Zeile nicht existiert, sollten Sie sie hinzufügen.
-            // Für ein initiales Laden der Daten kann der getAllTeilnehmer Endpunkt verwendet werden.
-            // Für hinzugefügte Teilnehmer müsste hier die Logik zum Erstellen einer neuen Zeile implementiert werden.
-            console.warn(`Zeile für Teilnehmer-ID ${data.id} nicht gefunden. Implementiere Logik zum Hinzufügen.`);
-            return;
+            // Zeile existiert nicht, also ist es ein NEUER Teilnehmer
+            row = document.createElement('tr');
+            row.id = rowId;
+            tableBody.appendChild(row); // Füge die neue Zeile am Ende der Tabelle an
+            console.log(`Neue Zeile für Teilnehmer-ID ${data.id} hinzugefügt.`);
+            // Initialisiere die Zellen für die neue Zeile
+            for (let i = 0; i < 8; i++) {
+                row.appendChild(document.createElement('td'));
+            }
         }
 
-        // Aktualisiere die Zellen in der vorhandenen Zeile
-        // ... (Der gleiche Logik wie im Python-Beispiel, um die TD-Elemente zu aktualisieren)
+        // Fülle oder aktualisiere die Zellen der Zeile
         row.children[0].innerText = data.id;
         row.children[1].innerText = data.verein;
         row.children[2].innerText = data.name;
         row.children[3].innerText = data.altersklasse;
 
         const startgebuehrCell = row.children[4];
-        startgebuehrCell.innerText = data.startgebuehrBezahlt ? 'Ja' : 'Nein'; // Beachten Sie camelCase für Java-Properties
+        startgebuehrCell.innerText = data.startgebuehrBezahlt ? 'Ja' : 'Nein';
         startgebuehrCell.className = data.startgebuehrBezahlt ? 'paid' : 'not-paid';
 
         row.children[5].innerText = data.startgebuehrMussNichtZahlen ? 'Ja' : 'Nein';
         row.children[6].innerText = data.anwesenheitsStatus;
         row.children[7].innerText = data.kommentar || '';
 
-        // Aktualisiere die Zeilenklasse für Anwesenheitsstatus
-        row.className = ''; // Reset
+        // Aktualisiere die Klassen für die Anwesenheit
+        row.className = ''; // Setze Klassen zurück
         if (data.anwesenheitsStatus === 'anwesend') {
             row.classList.add('present');
         } else if (data.anwesenheitsStatus === 'abgesagt') {
@@ -61,6 +108,28 @@
         }
     }
 
-    // Initialisierung der Verbindung beim Laden der Seite
     document.addEventListener('DOMContentLoaded', connect);
+
+    // ZUSÄTZLICHE FUNKTION: Initiales Laden der Teilnehmerdaten
+    async function loadInitialTeilnehmer() {
+        try {
+            const response = await fetch('/api/teilnehmer');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const teilnehmerList = await response.json();
+            tableBody.innerHTML = ''; // Leere vorhandene Einträge
+
+            teilnehmerList.forEach(t => {
+                upsertTable(t); // Nutze die upsertTable Funktion auch für das initiale Laden
+            });
+        } catch (error) {
+            console.error("Fehler beim Laden der Teilnehmerdaten:", error);
+        }
+    }
+
+    // Lade die Initialdaten, sobald DOM bereit ist
+    document.addEventListener('DOMContentLoaded', loadInitialTeilnehmer);
 </script>
+</body>
+</html>
