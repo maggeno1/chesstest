@@ -7,35 +7,114 @@
     <link rel="stylesheet" href="/css/style.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
-    <script src="/js/qrcode.min.js"></script> <style>
-    /* Dies könnte auch in style.css sein */
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    th { background-color: #f2f2f2; }
-    .paid { color: green; font-weight: bold; }
-    .not-paid { color: red; }
-    .present { background-color: #e6ffe6; }
-    .absent { background-color: #fff0f0; }
-    /* Neuer Stil für den QR-Code-Bereich im Admin-Dashboard */
-    .admin-dashboard-qr-section {
-        margin-top: 40px;
-        padding: 20px;
-        border: 1px solid #ccc;
-        border-radius: 8px;
-        background-color: #f9f9f9;
-        text-align: center;
-    }
-    #userHtmlQrCodeContainer {
-        margin-top: 15px;
-        border: 1px solid #ddd;
-        padding: 5px;
-        display: inline-block; /* Für Zentrierung */
-    }
-</style>
+    <script src="/js/qrcode.min.js"></script>
+    <style>
+        /* Dies könnte auch in style.css sein */
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .paid { color: green; font-weight: bold; }
+        .not-paid { color: red; }
+        .no-payment-required { color: blue; } /* Neuer Stil für "Muss nicht zahlen" */
+        .present { background-color: #e6ffe6; }
+        .absent { background-color: #fff0f0; }
+
+        .admin-button {
+            background-color: #4CAF50; /* Green */
+            color: white;
+            padding: 5px 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 2px;
+        }
+        .admin-button:hover {
+            background-color: #45a049;
+        }
+        .delete-button {
+            background-color: #f44336; /* Rot */
+            color: white;
+            padding: 5px 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 2px;
+        }
+        .delete-button:hover {
+            background-color: #da190b;
+        }
+        /* Die folgenden Sektionen sind nun ausgeblendet */
+        .club-update-section, .token-generation-section {
+            display: none; /* NEU: Diese Sektionen werden nicht mehr angezeigt */
+        }
+        .server-ip-section {
+            margin-top: 30px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        .club-update-section label, .club-update-section select, .club-update-section button,
+        .token-generation-section button {
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        .club-update-section select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 250px;
+        }
+        /* Styles für QR-Code */
+        #userHtmlQrCodeContainer {
+            margin-top: 15px;
+            border: 1px solid #ccc;
+            padding: 5px;
+            display: inline-block;
+        }
+        #serverIpDisplay {
+            font-weight: bold;
+            color: #007bff;
+        }
+        .anwesenheit-cell, .startgebuehr-cell {
+            text-align: center;
+        }
+    </style>
 </head>
 <body>
 <h1>Admin-Dashboard</h1>
+
+<div class="server-ip-section">
+    <h2>Server-IP-Adresse</h2>
+    <p>Aktuelle Server-IP: <span id="serverIpDisplay">Lädt...</span></p>
+    <p id="qrMessage" style="margin-top: 10px;"></p>
+    <div id="userHtmlQrCodeContainer"></div>
+</div>
+
+<div class="club-update-section">
+    <h2>Startgebühr für Verein aktualisieren</h2>
+    <label for="vereinNameSelect">Vereinsname auswählen:</label>
+    <select id="vereinNameSelect">
+        <option value="">-- Verein auswählen --</option>
+    </select>
+    <button onclick="updateClubStartgebuehr(true)">Alle Anwesenden des Vereins auf 'Bezahlt' setzen</button>
+    <button onclick="updateClubStartgebuehr(false)">Alle Anwesenden des Vereins auf 'Nicht Bezahlt' setzen</button>
+    <p id="clubUpdateMessage" style="margin-top: 10px;"></p>
+</div>
+
+<div class="token-generation-section">
+    <h2>Registrierungstoken generieren</h2>
+    <button onclick="generateAndDisplayToken()">Neuen Token generieren</button>
+    <div id="tokenOutput">
+        <p>Generierter Token:</p>
+        <div id="generatedTokenDisplay"></div>
+        <div id="qrCodeContainer" class="hidden"></div>
+        <p id="tokenMessage" style="margin-top: 5px; color: green;"></p>
+    </div>
+</div>
 
 <table>
     <thead>
@@ -44,27 +123,20 @@
         <th>Verein</th>
         <th>Name</th>
         <th>Altersklasse</th>
-        <th>Startgebühr Bezahlt</th>
-        <th>Muss nicht zahlen</th>
+        <th>Startgebühr</th>
         <th>Anwesenheit</th>
         <th>Kommentar</th>
+        <th>Aktion</th>
     </tr>
     </thead>
     <tbody id="teilnehmer-table-body">
     </tbody>
 </table>
 
-<div class="admin-dashboard-qr-section">
-    <h2>QR-Code zur Teilnehmerliste (user.html)</h2>
-    <p>Scanne diesen QR-Code, um die **Teilnehmerliste** (user.html) auf einem anderen Gerät zu öffnen.</p>
-    <div id="userHtmlQrCodeContainer"></div>
-    <p id="userHtmlQrMessage" style="margin-top: 10px;"></p>
-</div>
-
-
 <script>
     let stompClient = null;
     const tableBody = document.getElementById('teilnehmer-table-body');
+    let currentGeneratedToken = null; // Speichert den Token, der gerade auf der Seite angezeigt wird
 
     function connect() {
         let socket = new SockJS('/ws');
@@ -75,18 +147,49 @@
                 const updatedTeilnehmer = JSON.parse(message.body);
                 console.log('Update/Neuer Teilnehmer erhalten:', updatedTeilnehmer);
                 upsertTable(updatedTeilnehmer);
+                // loadVereinNames(); // Vereinsnamen müssen hier nicht neu geladen werden, da die Sektion ausgeblendet ist
             });
+            stompClient.subscribe('/topic/tokenUsed', function (message) {
+                const usedToken = message.body;
+                console.log('Token als verwendet markiert erhalten (endgültig):', usedToken);
+                if (currentGeneratedToken && currentGeneratedToken === usedToken) {
+                    const qrcodeDiv = document.getElementById('qrCodeContainer');
+                    qrcodeDiv.classList.add('hidden');
+                    qrcodeDiv.style.display = 'none';
+                    document.getElementById('tokenMessage').innerText = `Token "${usedToken}" wurde verwendet und ist jetzt inaktiv.`;
+                    document.getElementById('tokenMessage').style.color = 'orange';
+                    currentGeneratedToken = null; // Token ist final verbraucht
+                }
+            });
+            // NEU: Abonnement für das "Token gescannt"-Status
+            stompClient.subscribe('/topic/tokenScannedStatus', function (message) {
+                const scannedToken = message.body;
+                console.log('Token als gescannt erhalten (vorläufig):', scannedToken);
+                // Wenn der gescannte Token der aktuell angezeigte ist, blende den QR-Code aus.
+                if (currentGeneratedToken && currentGeneratedToken === scannedToken) {
+                    const qrcodeDiv = document.getElementById('qrCodeContainer');
+                    qrcodeDiv.classList.add('hidden');
+                    qrcodeDiv.style.display = 'none';
+                    document.getElementById('tokenMessage').innerText = `Token "${scannedToken}" wurde gescannt. Warte auf Registrierung...`;
+                    document.getElementById('tokenMessage').style.color = 'blue';
+                    // currentGeneratedToken bleibt hier, bis die tatsächliche Registrierung erfolgt ist
+                }
+            });
+            // NEU: Abonnement für das "Teilnehmer gelöscht"-Status
+            stompClient.subscribe('/topic/teilnehmerDeleted', function (message) {
+                const deletedId = parseInt(message.body); // Die ID des gelöschten Teilnehmers
+                console.log('Teilnehmer gelöscht erhalten:', deletedId);
+                const rowToRemove = document.getElementById(`teilnehmer-${deletedId}`);
+                if (rowToRemove) {
+                    rowToRemove.remove();
+                    // loadVereinNames(); // Vereinsnamen müssen hier nicht neu geladen werden, da die Sektion ausgeblendet ist
+                }
+            });
+
         }, function(error) {
             console.error('STOMP Fehler:', error);
-            setTimeout(connect, 5000);
+            setTimeout(connect, 5000); // Erneut versuchen nach 5 Sekunden
         });
-    }
-
-    function disconnect() {
-        if (stompClient !== null) {
-            stompClient.disconnect();
-        }
-        console.log("Getrennt");
     }
 
     function upsertTable(data) {
@@ -94,36 +197,90 @@
         let row = document.getElementById(rowId);
 
         if (!row) {
-            row = document.createElement('tr');
+            row = tableBody.insertRow(); // Fügt eine neue Zeile am Ende hinzu
             row.id = rowId;
-            tableBody.appendChild(row);
-            console.log(`Neue Zeile für Teilnehmer-ID ${data.id} hinzugefügt.`);
+            // Füge alle Zellen hinzu: 7 Daten + 1 Aktion = 8 Spalten
             for (let i = 0; i < 8; i++) {
-                row.appendChild(document.createElement('td'));
+                row.insertCell();
             }
         }
 
-        row.children[0].innerText = data.id;
-        row.children[1].innerText = data.verein;
-        row.children[2].innerText = data.name;
-        row.children[3].innerText = data.altersklasse;
+        row.cells[0].innerText = data.id;
+        row.cells[1].innerText = data.verein;
+        row.cells[2].innerText = data.name;
+        row.cells[3].innerText = data.altersklasse;
 
-        const startgebuehrCell = row.children[4];
-        startgebuehrCell.innerText = data.startgebuehrBezahlt ? 'Ja' : 'Nein';
-        startgebuehrCell.className = data.startgebuehrBezahlt ? 'paid' : 'not-paid';
+        // Startgebühr Status (jetzt cells[4])
+        let startgebuehrStatus = '';
+        let startgebuehrClass = '';
+        if (data.startgebuehrMussNichtZahlen) {
+            startgebuehrStatus = 'Muss nicht zahlen';
+            startgebuehrClass = 'no-payment-required';
+        } else if (data.startgebuehrBezahlt) {
+            startgebuehrStatus = 'Bezahlt';
+            startgebuehrClass = 'paid';
+        } else {
+            startgebuehrStatus = 'Nicht Bezahlt';
+            startgebuehrClass = 'not-paid';
+        }
+        row.cells[4].innerHTML = `<span class="${startgebuehrClass}">${startgebuehrStatus}</span>`;
 
-        row.children[5].innerText = data.startgebuehrMussNichtZahlen ? 'Ja' : 'Nein';
-        row.children[6].innerText = data.anwesenheitsStatus;
-        row.children[7].innerText = data.kommentar || '';
+        // NEU: 'Muss nicht zahlen'-Spalte entfernt, daher Anwesenheit jetzt cells[5]
+        row.cells[5].innerText = data.anwesenheitsStatus;
+        row.cells[6].innerText = data.kommentar || '';
 
+        // Aktualisiere die Klassen für die Anwesenheit der Zeile
         row.className = '';
         if (data.anwesenheitsStatus === 'anwesend') {
             row.classList.add('present');
         } else if (data.anwesenheitsStatus === 'abgesagt') {
             row.classList.add('absent');
         }
+
+        // Aktion-Zelle mit Löschen-Button (jetzt cells[7])
+        const actionCell = row.cells[7];
+        actionCell.innerHTML = `
+            <button class="delete-button" onclick="confirmDelete(${data.id}, '${data.name}')">Löschen</button>
+        `;
     }
 
+    // Zweifache Bestätigungsfunktion für das Löschen
+    function confirmDelete(id, name) {
+        const firstConfirmation = confirm(`Soll der Teilnehmer "${name}" (ID: ${id}) wirklich gelöscht werden?`);
+        if (firstConfirmation) {
+            const secondConfirmation = confirm(`Letzte Chance! Sind Sie ABSOLUT sicher, dass Sie "${name}" (ID: ${id}) löschen möchten? Diese Aktion kann NICHT rückgängig gemacht werden.`);
+            if (secondConfirmation) {
+                deleteTeilnehmer(id);
+            } else {
+                alert('Löschvorgang abgebrochen.');
+            }
+        } else {
+            alert('Löschvorgang abgebrochen.');
+        }
+    }
+
+    // Funktion zum Löschen des Teilnehmers im Backend
+    async function deleteTeilnehmer(id) {
+        try {
+            const response = await fetch(`/api/teilnehmer/${id}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                console.log(`Teilnehmer mit ID ${id} erfolgreich gelöscht.`);
+                // Die Zeile wird über den WebSocket-Handler entfernt
+            } else {
+                let errorText = await response.text();
+                alert(`Fehler beim Löschen des Teilnehmers: ${errorText || response.statusText}`);
+                console.error(`Fehler beim Löschen des Teilnehmers ID ${id}:`, errorText);
+            }
+        } catch (error) {
+            alert(`Netzwerkfehler beim Löschen: ${error.message}`);
+            console.error('Netzwerkfehler beim Löschen:', error);
+        }
+    }
+
+    // Funktion zum Laden der initialen Teilnehmerdaten beim Start
     async function loadInitialTeilnehmer() {
         try {
             const response = await fetch('/api/teilnehmer');
@@ -131,85 +288,92 @@
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             const teilnehmerList = await response.json();
-            tableBody.innerHTML = '';
-
+            tableBody.innerHTML = ''; // Leere vorhandene Einträge
             teilnehmerList.forEach(t => {
-                upsertTable(t);
+                upsertTable(t); // Nutze die upsertTable Funktion auch für das initiale Laden
             });
         } catch (error) {
             console.error("Fehler beim Laden der Teilnehmerdaten:", error);
+            tableBody.innerHTML = `<tr><td colspan="8">Fehler beim Laden der Daten. Bitte versuchen Sie es später erneut.</td></tr>`; // NEU: colspan 8
         }
     }
 
-    // NEUE FUNKTION: Generiert und zeigt den QR-Code für die user.html an
-    async function generateUserHtmlQrCode() {
-        const qrCodeContainer = document.getElementById('userHtmlQrCodeContainer');
-        const qrMessage = document.getElementById('userHtmlQrMessage');
+    // Funktionen für die ausgeblendeten Sektionen (können entfernt oder beibehalten werden, je nach Bedarf für zukünftige Nutzung)
+    // async function loadVereinNames() {}
+    // async function updateClubStartgebuehr(bezahlt) {}
+    // async function generateAndDisplayToken() {}
 
-        qrCodeContainer.innerHTML = 'Generiere QR-Code...';
-        qrMessage.innerText = '';
-
+    // Funktion zum Abrufen und Anzeigen der Server-IP-Adresse
+    async function getServerIpAddress() {
         try {
-            // 1. Server-IP-Adresse vom Backend abrufen
-            const ipResponse = await fetch('/api/server-ip');
-            if (!ipResponse.ok) {
-                throw new Error(`HTTP error! status: ${ipResponse.status}`);
+            const response = await fetch('/api/teilnehmer/server-ip');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
-            const serverIp = await ipResponse.text();
-
-            // 2. Volle URL für die user.html zusammenbauen
-            const port = window.location.port; // Holt den aktuellen Port der Seite
-            const userHtmlUrl = `http://${serverIp}:${port}/user.html`; // <-- Linkt zur user.html
-
-            console.log("URL für user.html QR-Code:", userHtmlUrl);
-
-            // 3. QR-Code generieren und anzeigen
-            if (qrCodeContainer && userHtmlUrl) {
-                const qr = new qrcode(10, "H");
-                qr.addData(userHtmlUrl, 'Byte');
-                qr.make();
-
-                const desiredTotalSize = 200; // Größe des QR-Codes
-                const moduleCount = qr.getModuleCount();
-                const cellSize = Math.floor(desiredTotalSize / (moduleCount + 8));
-                const margin = 4 * cellSize;
-
-                const imgTag = qr.createImgTag(cellSize, margin);
-
-                const linkTag = document.createElement('a');
-                linkTag.href = userHtmlUrl;
-                linkTag.target = "_blank"; // Öffnet den Link in einem neuen Tab
-                linkTag.innerHTML = imgTag;
-
-                qrCodeContainer.innerHTML = '';
-                qrCodeContainer.appendChild(linkTag);
-
-                qrCodeContainer.style.width = `${desiredTotalSize}px`;
-                qrCodeContainer.style.height = `${desiredTotalSize}px`;
-                qrCodeContainer.style.display = 'inline-block';
-                qrCodeContainer.style.margin = 'auto'; // Für Zentrierung
-
-                qrMessage.innerText = 'Scanne diesen QR-Code, um die Teilnehmerliste auf einem anderen Gerät zu öffnen.';
-                qrMessage.style.color = 'green';
-            } else {
-                console.error("QR Code Container nicht gefunden oder URL fehlt (user.html).");
-                qrMessage.innerText = 'Fehler: QR Code konnte nicht angezeigt werden.';
-                qrMessage.style.color = 'red';
-            }
-
+            const ipAddress = await response.text();
+            document.getElementById('serverIpDisplay').innerText = ipAddress;
+            generateUserHtmlQrCode(ipAddress); // QR-Code für user.html generieren
         } catch (error) {
-            console.error('Fehler beim Generieren des user.html QR-Codes:', error);
+            console.error('Fehler beim Abrufen der Server-IP:', error);
+            document.getElementById('serverIpDisplay').innerText = 'Nicht verfügbar';
+            document.getElementById('qrMessage').innerText = 'Fehler: QR Code für user.html konnte nicht generiert werden, da die Server-IP nicht ermittelt werden konnte.';
+            document.getElementById('qrMessage').style.color = 'red';
+        }
+    }
+
+    // Funktion zum Generieren des QR-Codes für user.html
+    function generateUserHtmlQrCode(ipAddress) {
+        const qrCodeContainer = document.getElementById('userHtmlQrCodeContainer');
+        const qrMessage = document.getElementById('qrMessage');
+
+        if (!ipAddress) {
+            qrMessage.innerText = 'IP-Adresse nicht verfügbar, QR-Code kann nicht generiert werden.';
+            qrMessage.style.color = 'red';
+            return;
+        }
+
+        // Baue die URL zur user.html unter Verwendung der Server-IP
+        const userHtmlUrl = `http://${ipAddress}:8080/user.html`; // Annahme: Spring Boot läuft auf Port 8080
+
+        if (qrCodeContainer && userHtmlUrl) {
+            const qr = new qrcode(10, "H");
+            qr.addData(userHtmlUrl, 'Byte');
+            qr.make();
+
+            const desiredTotalSize = 256;
+            const moduleCount = qr.getModuleCount();
+            const cellSize = Math.floor(desiredTotalSize / (moduleCount + 8));
+            const margin = 4 * cellSize;
+
+            const imgTag = qr.createImgTag(cellSize, margin);
+
+            const linkTag = document.createElement('a');
+            linkTag.href = userHtmlUrl;
+            linkTag.target = "_blank"; // Öffnet den Link in einem neuen Tab
+            linkTag.innerHTML = imgTag;
+
             qrCodeContainer.innerHTML = '';
-            qrMessage.innerText = `Fehler: ${error.message}.`;
+            qrCodeContainer.appendChild(linkTag);
+
+            qrCodeContainer.style.width = `${desiredTotalSize}px`;
+            qrCodeContainer.style.height = `${desiredTotalSize}px`;
+            qrCodeContainer.style.display = 'inline-block';
+            qrCodeContainer.style.margin = 'auto'; // Für Zentrierung
+
+            qrMessage.innerText = 'Scanne diesen QR-Code, um die Teilnehmerliste auf einem anderen Gerät zu öffnen.';
+            qrMessage.style.color = 'green';
+        } else {
+            console.error("QR Code Container nicht gefunden oder URL fehlt (user.html).");
+            qrMessage.innerText = 'Fehler: QR Code konnte nicht angezeigt werden.';
             qrMessage.style.color = 'red';
         }
     }
 
-
     document.addEventListener('DOMContentLoaded', () => {
-        connect();
-        loadInitialTeilnehmer();
-        generateUserHtmlQrCode(); // <-- NEUER AUFRUF beim Laden der Seite
+        connect(); // WebSocket-Verbindung herstellen
+        loadInitialTeilnehmer(); // Teilnehmerliste laden
+        // loadVereinNames(); // Nicht mehr benötigt, da die Sektion ausgeblendet ist
+        getServerIpAddress(); // Server-IP abrufen und QR-Code für user.html generieren
     });
 </script>
 </body>

@@ -2,16 +2,16 @@ package de.mschanzer.chesstest.chesstest;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.messaging.handler.annotation.MessageMapping; // Wichtig: Neue Annotation
+import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 
 @RestController
 @RequestMapping("/api/teilnehmer")
@@ -28,18 +28,12 @@ public class TeilnehmerController {
         this.tokenService = tokenService;
     }
 
-    /**
-     * Ruft alle registrierten Teilnehmer ab.
-     * Endpunkt: GET /api/teilnehmer
-     * Für die initiale Anzeige im Admin-Dashboard.
-     */
     @GetMapping
     @Transactional(readOnly = true)
     public Iterable<Teilnehmer> getAllTeilnehmer() {
         return teilnehmerRepository.findAll();
     }
 
-    // Endpunkt zum Abrufen aller einzigartigen Vereinsnamen
     @GetMapping("/vereine")
     @Transactional(readOnly = true)
     public ResponseEntity<List<String>> getDistinctVereinNames() {
@@ -179,16 +173,25 @@ public class TeilnehmerController {
         }
     }
 
-    /**
-     * NEU: Empfängt die Nachricht, dass ein Token gescannt wurde.
-     * Sendet dies an ein öffentliches WebSocket-Topic, damit Admins darauf reagieren können.
-     * Die URL für diesen Endpunkt ist: /app/tokenScanned (aus dem Frontend kommend)
-     * Und wird an /topic/tokenScannedStatus (für alle Abonnenten) weitergeleitet.
-     */
-    @MessageMapping("/tokenScanned") // Dies ist der Zielpfad von `stompClient.send()` im Frontend
+    @MessageMapping("/tokenScanned")
     public void handleTokenScanned(String tokenString) {
         System.out.println("Token gescannt: " + tokenString);
-        // Sende die Info an alle Clients, die /topic/tokenScannedStatus abonnieren
         messagingTemplate.convertAndSend("/topic/tokenScannedStatus", tokenString);
+    }
+
+    /**
+     * NEU: Löscht einen Teilnehmer anhand seiner ID.
+     * Endpunkt: DELETE /api/teilnehmer/{id}
+     */
+    @DeleteMapping("/{id}")
+    @Transactional // Stellt sicher, dass die Löschoperation atomar ist
+    public ResponseEntity<Void> deleteTeilnehmer(@PathVariable Long id) {
+        if (!teilnehmerRepository.existsById(id)) {
+            return ResponseEntity.notFound().build(); // 404 Not Found, wenn Teilnehmer nicht existiert
+        }
+        teilnehmerRepository.deleteById(id);
+        // Sende eine Nachricht an alle abonnierten Clients, dass ein Teilnehmer gelöscht wurde
+        messagingTemplate.convertAndSend("/topic/teilnehmerDeleted", id);
+        return ResponseEntity.noContent().build(); // 204 No Content bei erfolgreicher Löschung
     }
 }
