@@ -48,7 +48,7 @@
         }
         /* Die folgenden Sektionen sind nun ausgeblendet */
         .club-update-section, .token-generation-section {
-            display: none; /* NEU: Diese Sektionen werden nicht mehr angezeigt */
+            display: none; /* Diese Sektionen werden nicht mehr angezeigt */
         }
         .server-ip-section {
             margin-top: 30px;
@@ -82,6 +82,23 @@
         .anwesenheit-cell, .startgebuehr-cell {
             text-align: center;
         }
+        .tournament-button-section { /* NEU: Für Turnier-Button */
+            margin-top: 40px;
+            text-align: center;
+        }
+        .tournament-button-section button {
+            padding: 15px 30px;
+            font-size: 18px;
+            background-color: #28a745; /* Grüner Button */
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        .tournament-button-section button:hover {
+            background-color: #218838;
+        }
     </style>
 </head>
 <body>
@@ -94,27 +111,8 @@
     <div id="userHtmlQrCodeContainer"></div>
 </div>
 
-<div class="club-update-section">
-    <h2>Startgebühr für Verein aktualisieren</h2>
-    <label for="vereinNameSelect">Vereinsname auswählen:</label>
-    <select id="vereinNameSelect">
-        <option value="">-- Verein auswählen --</option>
-    </select>
-    <button onclick="updateClubStartgebuehr(true)">Alle Anwesenden des Vereins auf 'Bezahlt' setzen</button>
-    <button onclick="updateClubStartgebuehr(false)">Alle Anwesenden des Vereins auf 'Nicht Bezahlt' setzen</button>
-    <p id="clubUpdateMessage" style="margin-top: 10px;"></p>
-</div>
-
-<div class="token-generation-section">
-    <h2>Registrierungstoken generieren</h2>
-    <button onclick="generateAndDisplayToken()">Neuen Token generieren</button>
-    <div id="tokenOutput">
-        <p>Generierter Token:</p>
-        <div id="generatedTokenDisplay"></div>
-        <div id="qrCodeContainer" class="hidden"></div>
-        <p id="tokenMessage" style="margin-top: 5px; color: green;"></p>
-    </div>
-</div>
+<div class="club-update-section"></div>
+<div class="token-generation-section"></div>
 
 <table>
     <thead>
@@ -133,6 +131,11 @@
     </tbody>
 </table>
 
+<div class="tournament-button-section">
+    <button onclick="window.location.href = '/turnier.html';">Turnierverwaltung öffnen</button>
+</div>
+
+
 <script>
     let stompClient = null;
     const tableBody = document.getElementById('teilnehmer-table-body');
@@ -147,7 +150,6 @@
                 const updatedTeilnehmer = JSON.parse(message.body);
                 console.log('Update/Neuer Teilnehmer erhalten:', updatedTeilnehmer);
                 upsertTable(updatedTeilnehmer);
-                // loadVereinNames(); // Vereinsnamen müssen hier nicht neu geladen werden, da die Sektion ausgeblendet ist
             });
             stompClient.subscribe('/topic/tokenUsed', function (message) {
                 const usedToken = message.body;
@@ -158,37 +160,46 @@
                     qrcodeDiv.style.display = 'none';
                     document.getElementById('tokenMessage').innerText = `Token "${usedToken}" wurde verwendet und ist jetzt inaktiv.`;
                     document.getElementById('tokenMessage').style.color = 'orange';
-                    currentGeneratedToken = null; // Token ist final verbraucht
+                    currentGeneratedToken = null;
                 }
             });
-            // NEU: Abonnement für das "Token gescannt"-Status
             stompClient.subscribe('/topic/tokenScannedStatus', function (message) {
                 const scannedToken = message.body;
                 console.log('Token als gescannt erhalten (vorläufig):', scannedToken);
-                // Wenn der gescannte Token der aktuell angezeigte ist, blende den QR-Code aus.
                 if (currentGeneratedToken && currentGeneratedToken === scannedToken) {
                     const qrcodeDiv = document.getElementById('qrCodeContainer');
                     qrcodeDiv.classList.add('hidden');
                     qrcodeDiv.style.display = 'none';
                     document.getElementById('tokenMessage').innerText = `Token "${scannedToken}" wurde gescannt. Warte auf Registrierung...`;
                     document.getElementById('tokenMessage').style.color = 'blue';
-                    // currentGeneratedToken bleibt hier, bis die tatsächliche Registrierung erfolgt ist
                 }
             });
-            // NEU: Abonnement für das "Teilnehmer gelöscht"-Status
             stompClient.subscribe('/topic/teilnehmerDeleted', function (message) {
-                const deletedId = parseInt(message.body); // Die ID des gelöschten Teilnehmers
+                const deletedId = parseInt(message.body);
                 console.log('Teilnehmer gelöscht erhalten:', deletedId);
                 const rowToRemove = document.getElementById(`teilnehmer-${deletedId}`);
                 if (rowToRemove) {
                     rowToRemove.remove();
-                    // loadVereinNames(); // Vereinsnamen müssen hier nicht neu geladen werden, da die Sektion ausgeblendet ist
                 }
             });
+            // NEU: Abonnements für Turnier-Updates (auch wenn diese Seite sie nicht direkt nutzt, können sie empfangen werden)
+            stompClient.subscribe('/topic/tournamentUpdates', function (message) {
+                console.log('Turnier-Update erhalten:', message.body);
+            });
+            stompClient.subscribe('/topic/pairingUpdates', function (message) {
+                console.log('Paarungs-Update erhalten:', message.body);
+            });
+            stompClient.subscribe('/topic/pairingUpdated', function (message) {
+                console.log('Einzelne Paarung aktualisiert erhalten:', message.body);
+            });
+            stompClient.subscribe('/topic/standingsUpdates', function (message) {
+                console.log('Ranglisten-Update erhalten:', message.body);
+            });
+
 
         }, function(error) {
             console.error('STOMP Fehler:', error);
-            setTimeout(connect, 5000); // Erneut versuchen nach 5 Sekunden
+            setTimeout(connect, 5000);
         });
     }
 
@@ -197,9 +208,9 @@
         let row = document.getElementById(rowId);
 
         if (!row) {
-            row = tableBody.insertRow(); // Fügt eine neue Zeile am Ende hinzu
+            row = tableBody.insertRow();
             row.id = rowId;
-            // Füge alle Zellen hinzu: 7 Daten + 1 Aktion = 8 Spalten
+            // 7 Daten + 1 Aktion = 8 Spalten
             for (let i = 0; i < 8; i++) {
                 row.insertCell();
             }
@@ -210,7 +221,6 @@
         row.cells[2].innerText = data.name;
         row.cells[3].innerText = data.altersklasse;
 
-        // Startgebühr Status (jetzt cells[4])
         let startgebuehrStatus = '';
         let startgebuehrClass = '';
         if (data.startgebuehrMussNichtZahlen) {
@@ -225,11 +235,9 @@
         }
         row.cells[4].innerHTML = `<span class="${startgebuehrClass}">${startgebuehrStatus}</span>`;
 
-        // NEU: 'Muss nicht zahlen'-Spalte entfernt, daher Anwesenheit jetzt cells[5]
         row.cells[5].innerText = data.anwesenheitsStatus;
         row.cells[6].innerText = data.kommentar || '';
 
-        // Aktualisiere die Klassen für die Anwesenheit der Zeile
         row.className = '';
         if (data.anwesenheitsStatus === 'anwesend') {
             row.classList.add('present');
@@ -237,14 +245,12 @@
             row.classList.add('absent');
         }
 
-        // Aktion-Zelle mit Löschen-Button (jetzt cells[7])
         const actionCell = row.cells[7];
         actionCell.innerHTML = `
             <button class="delete-button" onclick="confirmDelete(${data.id}, '${data.name}')">Löschen</button>
         `;
     }
 
-    // Zweifache Bestätigungsfunktion für das Löschen
     function confirmDelete(id, name) {
         const firstConfirmation = confirm(`Soll der Teilnehmer "${name}" (ID: ${id}) wirklich gelöscht werden?`);
         if (firstConfirmation) {
@@ -259,7 +265,6 @@
         }
     }
 
-    // Funktion zum Löschen des Teilnehmers im Backend
     async function deleteTeilnehmer(id) {
         try {
             const response = await fetch(`/api/teilnehmer/${id}`, {
@@ -268,7 +273,6 @@
 
             if (response.ok) {
                 console.log(`Teilnehmer mit ID ${id} erfolgreich gelöscht.`);
-                // Die Zeile wird über den WebSocket-Handler entfernt
             } else {
                 let errorText = await response.text();
                 alert(`Fehler beim Löschen des Teilnehmers: ${errorText || response.statusText}`);
@@ -280,7 +284,6 @@
         }
     }
 
-    // Funktion zum Laden der initialen Teilnehmerdaten beim Start
     async function loadInitialTeilnehmer() {
         try {
             const response = await fetch('/api/teilnehmer');
@@ -288,22 +291,16 @@
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             const teilnehmerList = await response.json();
-            tableBody.innerHTML = ''; // Leere vorhandene Einträge
+            tableBody.innerHTML = '';
             teilnehmerList.forEach(t => {
-                upsertTable(t); // Nutze die upsertTable Funktion auch für das initiale Laden
+                upsertTable(t);
             });
         } catch (error) {
             console.error("Fehler beim Laden der Teilnehmerdaten:", error);
-            tableBody.innerHTML = `<tr><td colspan="8">Fehler beim Laden der Daten. Bitte versuchen Sie es später erneut.</td></tr>`; // NEU: colspan 8
+            tableBody.innerHTML = `<tr><td colspan="8">Fehler beim Laden der Daten. Bitte versuchen Sie es später erneut.</td></tr>`;
         }
     }
 
-    // Funktionen für die ausgeblendeten Sektionen (können entfernt oder beibehalten werden, je nach Bedarf für zukünftige Nutzung)
-    // async function loadVereinNames() {}
-    // async function updateClubStartgebuehr(bezahlt) {}
-    // async function generateAndDisplayToken() {}
-
-    // Funktion zum Abrufen und Anzeigen der Server-IP-Adresse
     async function getServerIpAddress() {
         try {
             const response = await fetch('/api/teilnehmer/server-ip');
@@ -312,7 +309,7 @@
             }
             const ipAddress = await response.text();
             document.getElementById('serverIpDisplay').innerText = ipAddress;
-            generateUserHtmlQrCode(ipAddress); // QR-Code für user.html generieren
+            generateUserHtmlQrCode(ipAddress);
         } catch (error) {
             console.error('Fehler beim Abrufen der Server-IP:', error);
             document.getElementById('serverIpDisplay').innerText = 'Nicht verfügbar';
@@ -321,7 +318,6 @@
         }
     }
 
-    // Funktion zum Generieren des QR-Codes für user.html
     function generateUserHtmlQrCode(ipAddress) {
         const qrCodeContainer = document.getElementById('userHtmlQrCodeContainer');
         const qrMessage = document.getElementById('qrMessage');
@@ -332,8 +328,7 @@
             return;
         }
 
-        // Baue die URL zur user.html unter Verwendung der Server-IP
-        const userHtmlUrl = `http://${ipAddress}:8080/user.html`; // Annahme: Spring Boot läuft auf Port 8080
+        const userHtmlUrl = `http://${ipAddress}:8080/user.html`;
 
         if (qrCodeContainer && userHtmlUrl) {
             const qr = new qrcode(10, "H");
@@ -349,7 +344,7 @@
 
             const linkTag = document.createElement('a');
             linkTag.href = userHtmlUrl;
-            linkTag.target = "_blank"; // Öffnet den Link in einem neuen Tab
+            linkTag.target = "_blank";
             linkTag.innerHTML = imgTag;
 
             qrCodeContainer.innerHTML = '';
@@ -358,7 +353,7 @@
             qrCodeContainer.style.width = `${desiredTotalSize}px`;
             qrCodeContainer.style.height = `${desiredTotalSize}px`;
             qrCodeContainer.style.display = 'inline-block';
-            qrCodeContainer.style.margin = 'auto'; // Für Zentrierung
+            qrCodeContainer.style.margin = 'auto';
 
             qrMessage.innerText = 'Scanne diesen QR-Code, um die Teilnehmerliste auf einem anderen Gerät zu öffnen.';
             qrMessage.style.color = 'green';
@@ -370,10 +365,9 @@
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-        connect(); // WebSocket-Verbindung herstellen
-        loadInitialTeilnehmer(); // Teilnehmerliste laden
-        // loadVereinNames(); // Nicht mehr benötigt, da die Sektion ausgeblendet ist
-        getServerIpAddress(); // Server-IP abrufen und QR-Code für user.html generieren
+        connect();
+        loadInitialTeilnehmer();
+        getServerIpAddress();
     });
 </script>
 </body>

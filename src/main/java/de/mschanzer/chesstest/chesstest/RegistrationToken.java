@@ -1,20 +1,25 @@
 package de.mschanzer.chesstest.chesstest;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.relational.core.mapping.Table;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table; // Optional, wenn Tabellenname vom Klassennamen abweicht
 
 import java.time.LocalDateTime;
-import java.util.UUID; // Für die Token-Generierung
+import java.util.UUID;
 
-@Table("registration_tokens") // Name der Datenbanktabelle
+@Entity // <-- Wichtig: Dies kennzeichnet die Klasse als JPA-Entität
+@Table(name = "registration_tokens") // <-- Optional: Wenn der Tabellenname vom Klassennamen abweicht
 public class RegistrationToken {
 
     @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY) // <-- Generierungsstrategie für die ID
     private Long id;
     private String token;
     private LocalDateTime createdAt;
     private LocalDateTime expiresAt;
-    private boolean isUsed; // true, wenn der Token verwendet wurde
+    private boolean isUsed;
 
     // Konstruktor, um einen neuen Token zu erzeugen
     public RegistrationToken() {

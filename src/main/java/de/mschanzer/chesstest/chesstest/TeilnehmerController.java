@@ -11,21 +11,30 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/teilnehmer")
-@CrossOrigin(origins = "*") // Erlaubt CORS für Entwicklung vom Tablet/anderen Ursprüngen
+@CrossOrigin(origins = "*")
 public class TeilnehmerController {
 
     private final TeilnehmerRepository teilnehmerRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final TokenService tokenService;
+    private final TournamentService tournamentService;
+    private final TournamentRoundRepository tournamentRoundRepository; // Deklaration ist korrekt
 
-    public TeilnehmerController(TeilnehmerRepository teilnehmerRepository, SimpMessagingTemplate messagingTemplate, TokenService tokenService) {
+    public TeilnehmerController(TeilnehmerRepository teilnehmerRepository,
+                                SimpMessagingTemplate messagingTemplate,
+                                TokenService tokenService,
+                                TournamentService tournamentService,
+                                TournamentRoundRepository tournamentRoundRepository) { // HIER HINZUGEFÜGT
         this.teilnehmerRepository = teilnehmerRepository;
         this.messagingTemplate = messagingTemplate;
         this.tokenService = tokenService;
+        this.tournamentService = tournamentService;
+        this.tournamentRoundRepository = tournamentRoundRepository; // HIER HINZUGEFÜGT
     }
 
     @GetMapping
@@ -179,19 +188,178 @@ public class TeilnehmerController {
         messagingTemplate.convertAndSend("/topic/tokenScannedStatus", tokenString);
     }
 
-    /**
-     * NEU: Löscht einen Teilnehmer anhand seiner ID.
-     * Endpunkt: DELETE /api/teilnehmer/{id}
-     */
     @DeleteMapping("/{id}")
-    @Transactional // Stellt sicher, dass die Löschoperation atomar ist
+    @Transactional
     public ResponseEntity<Void> deleteTeilnehmer(@PathVariable Long id) {
         if (!teilnehmerRepository.existsById(id)) {
-            return ResponseEntity.notFound().build(); // 404 Not Found, wenn Teilnehmer nicht existiert
+            return ResponseEntity.notFound().build();
         }
         teilnehmerRepository.deleteById(id);
-        // Sende eine Nachricht an alle abonnierten Clients, dass ein Teilnehmer gelöscht wurde
         messagingTemplate.convertAndSend("/topic/teilnehmerDeleted", id);
-        return ResponseEntity.noContent().build(); // 204 No Content bei erfolgreicher Löschung
+        return ResponseEntity.noContent().build();
+    }
+
+    // --- NEUE ENDPUNKTE FÜR TURNIERVERWALTUNG ---
+
+    /**
+     * Startet ein neues Turnier.
+     * POST /api/teilnehmer/tournament/start
+     * Request Body: { "name": "Mein Turnier", "totalRounds": 5 }
+     */
+    @PostMapping("/tournament/start")
+    public ResponseEntity<Tournament> startTournament(@RequestBody Map<String, Object> request) {
+        String tournamentName = (String) request.get("name");
+        Integer totalRounds = (Integer) request.get("totalRounds");
+
+        if (tournamentName == null || tournamentName.trim().isEmpty() || totalRounds == null || totalRounds <= 0) {
+            return ResponseEntity.badRequest().body(null);
+        }
+        try {
+            Tournament tournament = tournamentService.startNewTournament(tournamentName, totalRounds);
+            // Sende WebSocket-Update, dass ein Turnier gestartet wurde
+            messagingTemplate.convertAndSend("/topic/tournamentUpdates", tournament);
+            messagingTemplate.convertAndSend("/topic/pairingUpdates", tournament.getRounds().get(0).getPairings()); // Sende erste Paarungen
+            messagingTemplate.convertAndSend("/topic/standingsUpdates", tournamentService.getTournamentStandings(tournament)); // Sende erste Standings
+            return ResponseEntity.status(HttpStatus.CREATED).body(tournament);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(null); // Z.B. Turnier läuft bereits
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
+        }
+    }
+
+    /**
+     * Wechselt zur nächsten Runde (erstellt Paarungen für die nächste Runde).
+     * POST /api/teilnehmer/tournament/next-round/{tournamentId}
+     */
+    @PostMapping("/tournament/next-round/{tournamentId}")
+    public ResponseEntity<TournamentRound> nextRound(@PathVariable Long tournamentId) {
+        try {
+            Tournament tournament = tournamentService.getCurrentTournament(); // Annahme: nur ein Turnier läuft
+            if (tournament == null || !tournament.getId().equals(tournamentId)) {
+                return ResponseEntity.notFound().build();
+            }
+            TournamentRound newRound = tournamentService.createAndPairNextRound(tournament);
+            // Sende WebSocket-Update über die neue Runde und Paarungen
+            messagingTemplate.convertAndSend("/topic/tournamentUpdates", tournament);
+            messagingTemplate.convertAndSend("/topic/pairingUpdates", newRound.getPairings());
+            messagingTemplate.convertAndSend("/topic/standingsUpdates", tournamentService.getTournamentStandings(tournament));
+            return ResponseEntity.ok(newRound);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(null);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
+        }
+    }
+
+    /**
+     * Meldet ein Spielergebnis.
+     * PUT /api/teilnehmer/tournament/report-result/{pairingId}
+     * Request Body: { "result": 1.0 }
+     */
+    @PutMapping("/tournament/report-result/{pairingId}")
+    public ResponseEntity<Pairing> reportResult(@PathVariable Long pairingId, @RequestBody Map<String, Double> request) {
+        Double result = request.get("result");
+        if (result == null) {
+            return ResponseEntity.badRequest().body(null);
+        }
+        try {
+            Pairing updatedPairing = tournamentService.reportResult(pairingId, result);
+            // Sende WebSocket-Update über das aktualisierte Pairing
+            messagingTemplate.convertAndSend("/topic/pairingUpdated", updatedPairing);
+            // Sende aktualisierte Rangliste (Punkte ändern sich)
+            Tournament tournament = tournamentService.getCurrentTournament();
+            if (tournament != null) {
+                messagingTemplate.convertAndSend("/topic/standingsUpdates", tournamentService.getTournamentStandings(tournament));
+                if (updatedPairing.getRound().isCompleted()) { // Wenn Runde abgeschlossen, sende Tournament Update
+                    messagingTemplate.convertAndSend("/topic/tournamentUpdates", tournament);
+                }
+            }
+            return ResponseEntity.ok(updatedPairing);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(null);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
+        }
+    }
+
+    /**
+     * Ruft den aktuellen Turnierstatus ab.
+     * GET /api/teilnehmer/tournament/current
+     */
+    @GetMapping("/tournament/current")
+    public ResponseEntity<Tournament> getCurrentTournament() {
+        Tournament tournament = tournamentService.getCurrentTournament();
+        if (tournament == null) {
+            return ResponseEntity.noContent().build(); // 204 No Content, wenn kein Turnier läuft
+        }
+        return ResponseEntity.ok(tournament);
+    }
+
+    /**
+     * Ruft die Paarungen einer bestimmten Runde ab.
+     * GET /api/teilnehmer/tournament/{tournamentId}/round/{roundNumber}/pairings
+     */
+    @GetMapping("/tournament/{tournamentId}/round/{roundNumber}/pairings")
+    @Transactional(readOnly = true)
+    public ResponseEntity<List<Pairing>> getPairingsForRound(@PathVariable Long tournamentId, @PathVariable int roundNumber) {
+        Tournament tournament = tournamentService.getCurrentTournament();
+        if (tournament == null || !tournament.getId().equals(tournamentId)) {
+            return ResponseEntity.notFound().build();
+        }
+        TournamentRound round = tournamentRoundRepository.findByTournamentAndRoundNumber(tournament, roundNumber);
+        if (round == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(round.getPairings());
+    }
+
+    /**
+     * Ruft die aktuelle Rangliste ab.
+     * GET /api/teilnehmer/tournament/standings
+     */
+    @GetMapping("/tournament/standings")
+    public ResponseEntity<List<Teilnehmer>> getStandings() {
+        Tournament tournament = tournamentService.getCurrentTournament();
+        if (tournament == null) {
+            return ResponseEntity.noContent().build();
+        }
+        return ResponseEntity.ok(tournamentService.getTournamentStandings(tournament));
+    }
+
+    /**
+     * Beendet das aktuelle Turnier.
+     * POST /api/teilnehmer/tournament/end/{tournamentId}
+     */
+    @PostMapping("/tournament/end/{tournamentId}")
+    public ResponseEntity<Tournament> endTournament(@PathVariable Long tournamentId) {
+        try {
+            Tournament tournament = tournamentService.endTournament(tournamentId);
+            messagingTemplate.convertAndSend("/topic/tournamentUpdates", tournament); // Sende als beendet
+            messagingTemplate.convertAndSend("/topic/standingsUpdates", tournamentService.getTournamentStandings(tournament)); // Letzte Standings
+            return ResponseEntity.ok(tournament);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
+        }
+    }
+
+    /**
+     * Setzt alle Turnierdaten und Turnierstände der Teilnehmer zurück.
+     * POST /api/teilnehmer/tournament/reset-all
+     */
+    @PostMapping("/tournament/reset-all")
+    public ResponseEntity<Void> resetAllTournamentData() {
+        tournamentService.resetAllTournamentData();
+        // Sende ein leeres Update, um die UIs zu leeren/zurückzusetzen
+        messagingTemplate.convertAndSend("/topic/tournamentUpdates", List.of());
+        messagingTemplate.convertAndSend("/topic/pairingUpdates", List.of());
+        messagingTemplate.convertAndSend("/topic/standingsUpdates", List.of());
+        return ResponseEntity.noContent().build();
     }
 }

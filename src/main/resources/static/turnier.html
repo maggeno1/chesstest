@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schachturnierverwaltung (Schweizer System)</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; }
+        .container {
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            max-width: 900px;
+            margin: 20px auto;
+        }
+        h1, h2 { text-align: center; color: #333; margin-bottom: 20px; }
+        .controls, .pairing-controls, .status-info {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            transition: background-color 0.3s ease;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button.red {
+            background-color: #dc3545;
+        }
+        button.red:hover {
+            background-color: #c82333;
+        }
+        button.green {
+            background-color: #28a745;
+        }
+        button.green:hover {
+            background-color: #218838;
+        }
+
+        #tournamentStatus, #roundStatus {
+            font-weight: bold;
+            color: #555;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .pairing-table td {
+            text-align: center;
+        }
+        .pairing-table td:nth-child(2), .pairing-table td:nth-child(4) { /* Spieler-Namen linksbündig */
+            text-align: left;
+        }
+        .pairing-table input[type="radio"] {
+            margin: 0 5px;
+            cursor: pointer;
+        }
+        .pairing-table .result-buttons button {
+            padding: 5px 10px;
+            font-size: 14px;
+            margin: 0 3px;
+        }
+        .current-round-pairing-table {
+            background-color: #e6f7ff; /* Leichter Blauton für die aktuelle Runde */
+        }
+        .pairing-completed {
+            background-color: #d4edda; /* Grün für abgeschlossene Paarungen */
+        }
+        .pairing-bye {
+            font-style: italic;
+            color: #888;
+        }
+        .disabled-button {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .message {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .message.success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        #tournamentStartForm {
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+            margin-bottom: 30px;
+        }
+        #tournamentStartForm label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        #tournamentStartForm input[type="text"], #tournamentStartForm input[type="number"] {
+            width: calc(100% - 22px);
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Turnierverwaltung</h1>
+    <p><a href="/admin.html">Zurück zum Admin-Dashboard</a></p>
+
+    <div id="tournamentStartSection">
+        <h2>Neues Turnier starten</h2>
+        <form id="tournamentStartForm">
+            <label for="tournamentName">Turniername:</label>
+            <input type="text" id="tournamentName" value="Schnellschachturnier" required>
+
+            <label for="totalRounds">Anzahl der Runden:</label>
+            <input type="number" id="totalRounds" value="5" min="1" required>
+
+            <button type="submit" class="green">Turnier starten</button>
+            <button type="button" class="red" onclick="resetAllTournamentData()">Alle Turnierdaten zurücksetzen</button>
+        </form>
+        <div id="startTournamentMessage" class="message"></div>
+    </div>
+
+    <div id="tournamentActiveSection" style="display: none;">
+        <h2 id="currentTournamentName"></h2>
+        <div class="status-info">
+            <p id="tournamentStatus">Status: Nicht gestartet</p>
+            <p id="roundStatus">Runde: 0 / 0</p>
+        </div>
+
+        <div class="pairing-controls">
+            <button id="nextRoundBtn" onclick="nextRound()" class="green">Nächste Runde starten</button>
+            <button id="endTournamentBtn" onclick="endTournament()" class="red">Turnier beenden</button>
+        </div>
+        <div id="tournamentMessage" class="message"></div>
+
+        <h3>Aktuelle Runde: <span id="currentRoundNumberDisplay"></span></h3>
+        <table class="pairing-table">
+            <thead>
+            <tr>
+                <th>Tisch</th>
+                <th>Weiß (Punkte)</th>
+                <th>Schwarz (Punkte)</th>
+                <th>Ergebnis</th>
+                <th>Aktion</th>
+            </tr>
+            </thead>
+            <tbody id="current-pairings-table-body">
+            <tr><td colspan="5">Keine Paarungen für die aktuelle Runde.</td></tr>
+            </tbody>
+        </table>
+
+        <h3>Gesamttabelle</h3>
+        <table>
+            <thead>
+            <tr>
+                <th>Platz</th>
+                <th>Name</th>
+                <th>Verein</th>
+                <th>Punkte</th>
+                <th>Buchholz</th>
+            </tr>
+            </thead>
+            <tbody id="standings-table-body">
+            <tr><td colspan="5">Keine Rangliste verfügbar.</td></tr>
+            </tbody>
+        </table>
+
+        <h3>Vergangene Runden</h3>
+        <div id="past-rounds-container">
+            <p>Keine vergangenen Runden.</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    let stompClient = null;
+    let currentTournament = null;
+
+    const tournamentStartSection = document.getElementById('tournamentStartSection');
+    const tournamentActiveSection = document.getElementById('tournamentActiveSection');
+    const currentTournamentName = document.getElementById('currentTournamentName');
+    const tournamentStatusDisplay = document.getElementById('tournamentStatus');
+    const roundStatusDisplay = document.getElementById('roundStatus');
+    const currentRoundNumberDisplay = document.getElementById('currentRoundNumberDisplay');
+    const currentPairingsTableBody = document.getElementById('current-pairings-table-body');
+    const standingsTableBody = document.getElementById('standings-table-body');
+    const nextRoundBtn = document.getElementById('nextRoundBtn');
+    const endTournamentBtn = document.getElementById('endTournamentBtn');
+    const tournamentMessage = document.getElementById('tournamentMessage');
+    const startTournamentMessage = document.getElementById('startTournamentMessage');
+    const pastRoundsContainer = document.getElementById('past-rounds-container');
+
+    // --- WebSocket Verbindung ---
+    function connect() {
+        let socket = new SockJS('/ws');
+        stompClient = Stomp.over(socket);
+        stompClient.connect({}, function (frame) {
+            console.log('Verbunden mit WebSocket: ' + frame);
+
+            stompClient.subscribe('/topic/tournamentUpdates', function (message) {
+                const tournament = message.body ? JSON.parse(message.body) : null;
+                console.log('Turnier-Update erhalten:', tournament);
+                updateTournamentUI(tournament);
+            });
+
+            stompClient.subscribe('/topic/pairingUpdates', function (message) {
+                const pairings = JSON.parse(message.body);
+                console.log('Paarungs-Update erhalten:', pairings);
+                updateCurrentPairingsTable(pairings);
+            });
+
+            stompClient.subscribe('/topic/pairingUpdated', function (message) {
+                const updatedPairing = JSON.parse(message.body);
+                console.log('Einzelne Paarung aktualisiert erhalten:', updatedPairing);
+                updateSinglePairingInTable(updatedPairing);
+            });
+
+            stompClient.subscribe('/topic/standingsUpdates', function (message) {
+                const standings = JSON.parse(message.body);
+                console.log('Ranglisten-Update erhalten:', standings);
+                updateStandingsTable(standings);
+            });
+
+            // Initialen Turnierstatus abrufen
+            fetchCurrentTournament();
+
+        }, function(error) {
+            console.error('STOMP Fehler:', error);
+            setTimeout(connect, 5000); // Erneut versuchen nach 5 Sekunden
+        });
+    }
+
+    // --- UI-Aktualisierungen ---
+    function updateTournamentUI(tournament) {
+        currentTournament = tournament;
+        if (tournament && !tournament.finished) {
+            tournamentStartSection.style.display = 'none';
+            tournamentActiveSection.style.display = 'block';
+
+            currentTournamentName.innerText = tournament.name;
+            tournamentStatusDisplay.innerText = `Status: ${tournament.finished ? 'Beendet' : 'Läuft'}`;
+            roundStatusDisplay.innerText = `Runde: ${tournament.currentRound} / ${tournament.totalRounds}`;
+            currentRoundNumberDisplay.innerText = tournament.currentRound;
+
+            nextRoundBtn.disabled = false;
+            nextRoundBtn.classList.remove('disabled-button');
+            endTournamentBtn.disabled = false;
+            endTournamentBtn.classList.remove('disabled-button');
+
+            if (tournament.currentRound >= tournament.totalRounds) {
+                nextRoundBtn.disabled = true;
+                nextRoundBtn.classList.add('disabled-button');
+                tournamentMessage.className = 'message success';
+                tournamentMessage.innerText = 'Alle Runden sind gespielt. Bitte beenden Sie das Turnier.';
+            } else if (tournament.currentRound > 0 && !isCurrentRoundCompleted(tournament)) {
+                nextRoundBtn.disabled = true;
+                nextRoundBtn.classList.add('disabled-button');
+                tournamentMessage.className = 'message error';
+                tournamentMessage.innerText = 'Bitte alle Ergebnisse der aktuellen Runde eintragen, bevor die nächste Runde gestartet wird.';
+            } else {
+                tournamentMessage.innerText = ''; // Nachricht zurücksetzen
+            }
+
+            // Paarungen der aktuellen Runde laden (falls nicht schon über WS erhalten)
+            if (tournament.currentRound > 0) {
+                fetchPairingsForRound(tournament.id, tournament.currentRound);
+            } else {
+                currentPairingsTableBody.innerHTML = '<tr><td colspan="5">Turnier startet. Klicken Sie auf "Nächste Runde starten".</td></tr>';
+            }
+
+            // Vergangene Runden anzeigen
+            displayPastRounds(tournament);
+
+        } else {
+            tournamentStartSection.style.display = 'block';
+            tournamentActiveSection.style.display = 'none';
+            currentTournament = null;
+            startTournamentMessage.className = 'message success';
+            startTournamentMessage.innerText = tournament ? 'Turnier beendet.' : 'Kein Turnier aktiv.';
+        }
+    }
+
+    function updateCurrentPairingsTable(pairings) {
+        currentPairingsTableBody.innerHTML = '';
+        if (pairings && pairings.length > 0) {
+            pairings.sort((a,b) => a.id - b.id); // Sortiere nach ID für konsistente Anzeige
+            pairings.forEach((p, index) => {
+                const row = currentPairingsTableBody.insertRow();
+                row.id = `pairing-${p.id}`;
+                row.classList.toggle('pairing-completed', p.result !== null);
+
+                row.insertCell().innerText = index + 1; // Tisch-Nummer
+
+                if (p.bye) {
+                    row.insertCell().colSpan = 2;
+                    row.cells[1].innerHTML = `<span class="pairing-bye">${p.whitePlayer.name} (Freilos)</span>`;
+                    row.cells[1].style.textAlign = 'center';
+                    row.insertCell(); // Für die dritte Spalte (Ergebnis)
+                    row.insertCell(); // Für die vierte Spalte (Aktion)
+                    row.cells[3].innerText = '1.0'; // Ergebnis ist immer 1.0 bei Freilos
+                    row.cells[4].innerText = 'Freilos';
+                } else {
+                    row.insertCell().innerText = `${p.whitePlayer.name} (${p.whitePlayer.tournamentPoints})`;
+                    row.insertCell().innerText = `${p.blackPlayer.name} (${p.blackPlayer.tournamentPoints})`;
+
+                    const resultCell = row.insertCell();
+                    const actionCell = row.insertCell();
+
+                    if (p.result !== null) {
+                        resultCell.innerText = p.result === 1.0 ? '1-0' : (p.result === 0.5 ? '½-½' : '0-1');
+                        actionCell.innerText = 'Ergebnis gemeldet';
+                        resultCell.classList.add('pairing-completed');
+                    } else {
+                        // Ergebnis-Eingabe-Buttons
+                        resultCell.innerHTML = `
+                            <div class="result-buttons">
+                                <button onclick="reportResult(${p.id}, 1.0)" class="green">1-0</button>
+                                <button onclick="reportResult(${p.id}, 0.5)">½-½</button>
+                                <button onclick="reportResult(${p.id}, 0.0)" class="red">0-1</button>
+                            </div>
+                        `;
+                        actionCell.innerText = '';
+                    }
+                }
+            });
+        } else {
+            currentPairingsTableBody.innerHTML = '<tr><td colspan="5">Keine Paarungen für die aktuelle Runde.</td></tr>';
+        }
+        checkRoundCompletionStatus(); // Prüfe, ob alle Ergebnisse eingetragen sind
+    }
+
+    function updateSinglePairingInTable(updatedPairing) {
+        const row = document.getElementById(`pairing-${updatedPairing.id}`);
+        if (row) {
+            // Finde die Spalte für Ergebnis und Aktion
+            const resultCellIndex = updatedPairing.bye ? 3 : 3; // Index der Ergebnisspalte
+            const actionCellIndex = updatedPairing.bye ? 4 : 4; // Index der Aktionsspalte
+
+            row.cells[resultCellIndex].innerText = updatedPairing.result === 1.0 ? '1-0' : (updatedPairing.result === 0.5 ? '½-½' : '0-1');
+            row.cells[actionCellIndex].innerText = 'Ergebnis gemeldet';
+            row.classList.add('pairing-completed');
+        }
+        checkRoundCompletionStatus(); // Prüfe nach jeder Ergebnisaktualisierung
+    }
+
+
+    function updateStandingsTable(standings) {
+        standingsTableBody.innerHTML = '';
+        if (standings && standings.length > 0) {
+            standings.forEach((p, index) => {
+                const row = standingsTableBody.insertRow();
+                row.insertCell().innerText = index + 1; // Platz
+                row.insertCell().innerText = p.name;
+                row.insertCell().innerText = p.verein;
+                row.insertCell().innerText = p.tournamentPoints;
+                row.insertCell().innerText = p.buchholzScore;
+            });
+        } else {
+            standingsTableBody.innerHTML = '<tr><td colspan="5">Keine Rangliste verfügbar.</td></tr>';
+        }
+    }
+
+    function displayPastRounds(tournament) {
+        pastRoundsContainer.innerHTML = ''; // Vorherige Runden leeren
+
+        // Filtere abgeschlossene Runden, die nicht die aktuelle sind (wenn die aktuelle noch nicht abgeschlossen ist)
+        const completedRounds = tournament.rounds.filter(r => r.completed && r.roundNumber < tournament.currentRound);
+
+        if (completedRrounds.length === 0 && (tournament.finished || tournament.currentRound <= 1)) {
+             pastRoundsContainer.innerHTML = '<p>Keine vergangenen Runden.</p>';
+             return;
+        }
+
+        completedRounds.sort((a, b) => b.roundNumber - a.roundNumber); // Neueste zuerst
+
+        completedRounds.forEach(round => {
+            const roundDiv = document.createElement('div');
+            roundDiv.innerHTML = `<h4>Runde ${round.roundNumber}</h4>`;
+            const roundTable = document.createElement('table');
+            roundTable.className = 'pairing-table'; // Verwende dieselben Stile
+            roundTable.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>Tisch</th>
+                        <th>Weiß</th>
+                        <th>Schwarz</th>
+                        <th>Ergebnis</th>
+                    </tr>
+                </thead>
+                <tbody>
+                </tbody>
+            `;
+            const tbody = roundTable.querySelector('tbody');
+            round.pairings.forEach((p, index) => {
+                const row = tbody.insertRow();
+                row.insertCell().innerText = index + 1;
+                if (p.bye) {
+                    row.insertCell().colSpan = 2;
+                    row.cells[1].innerHTML = `<span class="pairing-bye">${p.whitePlayer.name} (Freilos)</span>`;
+                    row.insertCell(); // Für die dritte Spalte (Ergebnis)
+                    row.cells[2].innerText = '1.0';
+                } else {
+                    row.insertCell().innerText = p.whitePlayer.name;
+                    row.insertCell().innerText = p.blackPlayer.name;
+                    row.insertCell().innerText = p.result === 1.0 ? '1-0' : (p.result === 0.5 ? '½-½' : '0-1');
+                }
+            });
+            roundDiv.appendChild(roundTable);
+            pastRoundsContainer.appendChild(roundDiv);
+        });
+    }
+
+
+    // Überprüft, ob alle Paarungen der aktuellen Runde ein Ergebnis haben
+    function isCurrentRoundCompleted(tournament) {
+        if (!tournament || tournament.currentRound === 0) return false;
+
+        const currentRoundObj = tournament.rounds.find(r => r.roundNumber === tournament.currentRound);
+        if (currentRoundObj) {
+            return currentRoundObj.pairings.every(p => p.result !== null);
+        }
+        return false;
+    }
+
+    // Steuert den "Nächste Runde" Button basierend auf dem Abschluss der aktuellen Runde
+    function checkRoundCompletionStatus() {
+        if (currentTournament) {
+            const isCompleted = isCurrentRoundCompleted(currentTournament);
+            if (isCompleted && currentTournament.currentRound < currentTournament.totalRounds) {
+                nextRoundBtn.disabled = false;
+                nextRoundBtn.classList.remove('disabled-button');
+                tournamentMessage.className = 'message success';
+                tournamentMessage.innerText = 'Alle Ergebnisse gemeldet. Bereit für die nächste Runde!';
+            } else if (!isCompleted && currentTournament.currentRound > 0 && !currentTournament.finished) {
+                nextRoundBtn.disabled = true;
+                nextRoundBtn.classList.add('disabled-button');
+                tournamentMessage.className = 'message error';
+                tournamentMessage.innerText = 'Bitte alle Ergebnisse der aktuellen Runde eintragen, bevor die nächste Runde gestartet wird.';
+            } else if (currentTournament.finished) {
+                nextRoundBtn.disabled = true;
+                nextRoundBtn.classList.add('disabled-button');
+                tournamentMessage.className = 'message success';
+                tournamentMessage.innerText = 'Turnier beendet.';
+            } else { // Turnier gestartet, aber Runde 0
+                nextRoundBtn.disabled = false;
+                nextRoundBtn.classList.remove('disabled-button');
+                tournamentMessage.innerText = '';
+            }
+        }
+    }
+
+
+    // --- API-Aufrufe ---
+    async function fetchCurrentTournament() {
+        try {
+            const response = await fetch('/api/teilnehmer/tournament/current');
+            if (response.status === 204) { // No Content
+                updateTournamentUI(null);
+                return;
+            }
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const tournament = await response.json();
+            updateTournamentUI(tournament);
+            if (tournament && !tournament.finished && tournament.currentRound > 0) {
+                 fetchPairingsForRound(tournament.id, tournament.currentRound);
+                 fetchStandings();
+            }
+        } catch (error) {
+            console.error("Fehler beim Abrufen des Turniers:", error);
+            startTournamentMessage.className = 'message error';
+            startTournamentMessage.innerText = `Fehler beim Laden des Turniers: ${error.message}`;
+        }
+    }
+
+    async function startTournament(event) {
+        event.preventDefault();
+        const name = document.getElementById('tournamentName').value;
+        const totalRounds = parseInt(document.getElementById('totalRounds').value);
+
+        startTournamentMessage.className = 'message';
+        startTournamentMessage.innerText = 'Turnier wird gestartet...';
+
+        try {
+            const response = await fetch('/api/teilnehmer/tournament/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, totalRounds })
+            });
+
+            if (response.status === 409) { // Conflict
+                startTournamentMessage.className = 'message error';
+                startTournamentMessage.innerText = 'Ein Turnier läuft bereits. Bitte beenden Sie es zuerst oder setzen Sie alle Daten zurück.';
+            } else if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Fehler (${response.status}): ${errorText}`);
+            } else {
+                const tournament = await response.json();
+                updateTournamentUI(tournament);
+                startTournamentMessage.className = 'message success';
+                startTournamentMessage.innerText = 'Turnier erfolgreich gestartet!';
+            }
+        } catch (error) {
+            console.error('Fehler beim Starten des Turniers:', error);
+            startTournamentMessage.className = 'message error';
+            startTournamentMessage.innerText = `Fehler beim Starten des Turniers: ${error.message}`;
+        }
+    }
+
+    async function nextRound() {
+        if (!currentTournament) {
+            tournamentMessage.className = 'message error';
+            tournamentMessage.innerText = 'Kein aktives Turnier gefunden.';
+            return;
+        }
+        if (currentTournament.currentRound >= currentTournament.totalRounds) {
+            tournamentMessage.className = 'message error';
+            tournamentMessage.innerText = 'Alle Runden sind bereits gespielt.';
+            return;
+        }
+        if (currentTournament.currentRound > 0 && !isCurrentRoundCompleted(currentTournament)) {
+             tournamentMessage.className = 'message error';
+             tournamentMessage.innerText = 'Bitte alle Ergebnisse der aktuellen Runde eintragen, bevor die nächste Runde gestartet wird.';
+             return;
+        }
+
+        tournamentMessage.className = 'message';
+        tournamentMessage.innerText = 'Nächste Runde wird vorbereitet...';
+        nextRoundBtn.disabled = true;
+        nextRoundBtn.classList.add('disabled-button');
+
+        try {
+            const response = await fetch(`/api/teilnehmer/tournament/next-round/${currentTournament.id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Fehler (${response.status}): ${errorText}`);
+            }
+            const newRound = await response.json();
+            tournamentMessage.className = 'message success';
+            tournamentMessage.innerText = `Runde ${newRound.roundNumber} erfolgreich gestartet!`;
+            // UI wird über WebSockets aktualisiert (tournamentUpdates, pairingUpdates)
+        } catch (error) {
+            console.error('Fehler beim Starten der nächsten Runde:', error);
+            tournamentMessage.className = 'message error';
+            tournamentMessage.innerText = `Fehler beim Starten der nächsten Runde: ${error.message}`;
+            nextRoundBtn.disabled = false;
+            nextRoundBtn.classList.remove('disabled-button');
+        }
+    }
+
+    async function reportResult(pairingId, result) {
+        tournamentMessage.className = 'message';
+        tournamentMessage.innerText = 'Ergebnis wird gemeldet...';
+
+        try {
+            const response = await fetch(`/api/teilnehmer/tournament/report-result/${pairingId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ result })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Fehler (${response.status}): ${errorText}`);
+            }
+            // const updatedPairing = await response.json(); // Update kommt über WebSocket
+            tournamentMessage.className = 'message success';
+            tournamentMessage.innerText = 'Ergebnis erfolgreich gemeldet!';
+        } catch (error) {
+            console.error('Fehler beim Melden des Ergebnisses:', error);
+            tournamentMessage.className = 'message error';
+            tournamentMessage.innerText = `Fehler beim Melden des Ergebnisses: ${error.message}`;
+        }
+    }
+
+    async function fetchPairingsForRound(tournamentId, roundNumber) {
+        try {
+            const response = await fetch(`/api/teilnehmer/tournament/${tournamentId}/round/${roundNumber}/pairings`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const pairings = await response.json();
+            updateCurrentPairingsTable(pairings);
+        } catch (error) {
+            console.error("Fehler beim Abrufen der Paarungen:", error);
+            currentPairingsTableBody.innerHTML = '<tr><td colspan="5" class="message error">Fehler beim Laden der Paarungen.</td></tr>';
+        }
+    }
+
+    async function fetchStandings() {
+        try {
+            const response = await fetch('/api/teilnehmer/tournament/standings');
+            if (response.status === 204) { // No Content
+                updateStandingsTable([]);
+                return;
+            }
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const standings = await response.json();
+            updateStandingsTable(standings);
+        } catch (error) {
+            console.error("Fehler beim Abrufen der Rangliste:", error);
+            standingsTableBody.innerHTML = '<tr><td colspan="5" class="message error">Fehler beim Laden der Rangliste.</td></tr>';
+        }
+    }
+
+    async function endTournament() {
+        if (!currentTournament) {
+            alert('Kein Turnier aktiv zum Beenden.');
+            return;
+        }
+
+        const confirmEnd = confirm(`Sind Sie sicher, dass Sie das Turnier "${currentTournament.name}" (Runde ${currentTournament.currentRound}/${currentTournament.totalRounds}) beenden möchten?`);
+        if (!confirmEnd) return;
+
+        tournamentMessage.className = 'message';
+        tournamentMessage.innerText = 'Turnier wird beendet...';
+        endTournamentBtn.disabled = true;
+        endTournamentBtn.classList.add('disabled-button');
+
+        try {
+            const response = await fetch(`/api/teilnehmer/tournament/end/${currentTournament.id}`, {
+                method: 'POST'
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Fehler (${response.status}): ${errorText}`);
+            }
+            // const finishedTournament = await response.json(); // UI wird über WebSocket aktualisiert
+            tournamentMessage.className = 'message success';
+            tournamentMessage.innerText = 'Turnier erfolgreich beendet!';
+            // UI wird über WebSocket (tournamentUpdates) in den "start" Zustand zurückgesetzt
+        } catch (error) {
+            console.error('Fehler beim Beenden des Turniers:', error);
+            tournamentMessage.className = 'message error';
+            tournamentMessage.innerText = `Fehler beim Beenden des Turniers: ${error.message}`;
+            endTournamentBtn.disabled = false;
+            endTournamentBtn.classList.remove('disabled-button');
+        }
+    }
+
+    async function resetAllTournamentData() {
+        const confirmReset = confirm('SIND SIE SICHER? Dies löscht ALLE Turniere und setzt die Turnierpunkte aller Teilnehmer zurück. Diese Aktion kann NICHT rückgängig gemacht werden!');
+        if (!confirmReset) return;
+
+        startTournamentMessage.className = 'message';
+        startTournamentMessage.innerText = 'Alle Turnierdaten werden zurückgesetzt...';
+
+        try {
+            const response = await fetch('/api/teilnehmer/tournament/reset-all', {
+                method: 'POST'
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Fehler (${response.status}): ${errorText}`);
+            }
+            startTournamentMessage.className = 'message success';
+            startTournamentMessage.innerText = 'Alle Turnierdaten erfolgreich zurückgesetzt! Sie können ein neues Turnier starten.';
+            updateTournamentUI(null); // Setze UI in Startzustand
+        } catch (error) {
+            console.error('Fehler beim Zurücksetzen der Turnierdaten:', error);
+            startTournamentMessage.className = 'message error';
+            startTournamentMessage.innerText = `Fehler beim Zurücksetzen der Daten: ${error.message}`;
+        }
+    }
+
+
+    // --- Initialisierung ---
+    document.addEventListener('DOMContentLoaded', () => {
+        connect(); // WebSocket-Verbindung herstellen und initialen Turnierstatus abrufen
+        document.getElementById('tournamentStartForm').addEventListener('submit', startTournament);
+    });
+</script>
+</body>
+</html>
