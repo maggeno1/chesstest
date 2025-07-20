@@ -1,9 +1,10 @@
-package de.mschanzer.chesstest.chesstest; // Stellen Sie sicher, dass das Paket korrekt ist
+package de.mschanzer.chesstest.chesstest;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import com.fasterxml.jackson.annotation.JsonManagedReference; // NEU
 
 @Entity
 public class Tournament {
@@ -20,6 +21,7 @@ public class Tournament {
 
     @OneToMany(mappedBy = "tournament", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("roundNumber ASC")
+    @JsonManagedReference // NEU: Annotation hinzugefügt
     private List<TournamentRound> rounds = new ArrayList<>();
 
     // Konstruktoren
@@ -92,6 +94,10 @@ public class Tournament {
 
     public List<TournamentRound> getRounds() {
         return rounds;
+    }
+
+    public void setRounds(List<TournamentRound> rounds) {
+        this.rounds = rounds;
     }
 
     public void addRound(TournamentRound round) {

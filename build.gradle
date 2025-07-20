@@ -38,10 +38,11 @@ dependencies {
 	implementation 'org.xerial:sqlite-jdbc:3.45.1.0' // Benötigter SQLite JDBC-Treiber
 	// KEIN 'org.springframework.data:spring-data-relational'
 	// KEIN 'com.github.komamitsu:spring-data-sqlite:1.2.0'
-	implementation 'jakarta.persistence:jakarta.persistence-api:3.2.0'
+	// implementation 'jakarta.persistence:jakarta.persistence-api:3.2.0'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa' // Der JPA-Starter
 	// KEIN 'com.h2database:h2'
 	implementation 'org.hibernate.orm:hibernate-community-dialects:6.6.18.Final' // Der benötigte SQLite-Dialekt
+	implementation 'com.fasterxml.jackson.datatype:jackson-datatype-hibernate6'
 }
 
 tasks.named('test') {

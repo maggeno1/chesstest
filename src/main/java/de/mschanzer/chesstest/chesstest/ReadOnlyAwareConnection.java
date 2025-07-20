@@ -36,98 +36,28 @@ class ReadOnlyAwareConnection implements Connection {
     }
 
     @Override
-    public boolean isClosed() throws SQLException {
-        return targetConnection.isClosed();
-    }
-
-    @Override
-    public boolean isReadOnly() throws SQLException {
-        return targetConnection.isReadOnly();
-    }
-
-    @Override
-    public boolean isValid(int timeout) throws SQLException {
-        return targetConnection.isValid(timeout);
-    }
-
-    @Override
-    public boolean getAutoCommit() throws SQLException {
-        return targetConnection.getAutoCommit();
-    }
-
-    @Override
-    public String getCatalog() throws SQLException {
-        return targetConnection.getCatalog();
-    }
-
-    @Override
-    public String getSchema() throws SQLException {
-        return targetConnection.getSchema();
-    }
-
-    @Override
-    public int getTransactionIsolation() throws SQLException {
-        return targetConnection.getTransactionIsolation();
-    }
-
-    @Override
-    public SQLWarning getWarnings() throws SQLException {
-        return targetConnection.getWarnings();
-    }
-
-    @Override
-    public DatabaseMetaData getMetaData() throws SQLException {
-        return targetConnection.getMetaData();
-    }
-
-    @Override
-    public String getClientInfo(String name) throws SQLException {
-        return targetConnection.getClientInfo(name);
-    }
-
-    @Override
-    public Properties getClientInfo() throws SQLException {
-        return targetConnection.getClientInfo();
-    }
-
-    @Override
     public Array createArrayOf(String typeName, Object[] elements) throws SQLException {
-        return null;
+        return targetConnection.createArrayOf(typeName, elements);
     }
 
     @Override
-    public Struct createStruct(String typeName, Object[] attributes) throws SQLException {
-        return null;
+    public Blob createBlob() throws SQLException {
+        return targetConnection.createBlob();
     }
 
     @Override
-    public int getHoldability() throws SQLException {
-        return targetConnection.getHoldability();
+    public Clob createClob() throws SQLException {
+        return targetConnection.createClob();
     }
 
     @Override
-    public void setAutoCommit(boolean autoCommit) throws SQLException {
-        targetConnection.setAutoCommit(autoCommit);
+    public NClob createNClob() throws SQLException {
+        return targetConnection.createNClob();
     }
 
     @Override
-    public void setCatalog(String catalog) throws SQLException {
-        targetConnection.setCatalog(catalog);
-    }
-
-    @Override
-    public void setSchema(String schema) throws SQLException {
-        targetConnection.setSchema(schema);
-    }
-
-    @Override
-    public void setTransactionIsolation(int level) throws SQLException {
-        targetConnection.setTransactionIsolation(level);
-    }
-
-    @Override
-    public void clearWarnings() throws SQLException {
-        targetConnection.clearWarnings();
+    public SQLXML createSQLXML() throws SQLException {
+        return targetConnection.createSQLXML();
     }
 
     @Override
@@ -143,6 +73,86 @@ class ReadOnlyAwareConnection implements Connection {
     @Override
     public Statement createStatement(int resultSetType, int resultSetConcurrency, int resultSetHoldability) throws SQLException {
         return targetConnection.createStatement(resultSetType, resultSetConcurrency, resultSetHoldability);
+    }
+
+    @Override
+    public Struct createStruct(String typeName, Object[] attributes) throws SQLException {
+        return targetConnection.createStruct(typeName, attributes);
+    }
+
+    @Override
+    public boolean getAutoCommit() throws SQLException {
+        return targetConnection.getAutoCommit();
+    }
+
+    @Override
+    public String getCatalog() throws SQLException {
+        return targetConnection.getCatalog();
+    }
+
+    @Override
+    public Properties getClientInfo() throws SQLException {
+        return targetConnection.getClientInfo();
+    }
+
+    @Override
+    public String getClientInfo(String name) throws SQLException {
+        return targetConnection.getClientInfo(name);
+    }
+
+    @Override
+    public int getHoldability() throws SQLException {
+        return targetConnection.getHoldability();
+    }
+
+    @Override
+    public DatabaseMetaData getMetaData() throws SQLException {
+        return targetConnection.getMetaData();
+    }
+
+    @Override
+    public int getTransactionIsolation() throws SQLException {
+        return targetConnection.getTransactionIsolation();
+    }
+
+    @Override
+    public Map<String, Class<?>> getTypeMap() throws SQLException {
+        return targetConnection.getTypeMap();
+    }
+
+    @Override
+    public SQLWarning getWarnings() throws SQLException {
+        return targetConnection.getWarnings();
+    }
+
+    @Override
+    public boolean isClosed() throws SQLException {
+        return targetConnection.isClosed();
+    }
+
+    @Override
+    public boolean isReadOnly() throws SQLException {
+        return targetConnection.isReadOnly();
+    }
+
+    @Override
+    public boolean isValid(int timeout) throws SQLException {
+        return targetConnection.isValid(timeout);
+    }
+
+    @Override
+    public String getSchema() throws SQLException {
+        return targetConnection.getSchema();
+    }
+
+    @Override
+    public void abort(Executor executor) throws SQLException {
+        targetConnection.abort(executor);
+    }
+
+    @Override
+    public void clearWarnings() throws SQLException {
+        targetConnection.clearWarnings();
     }
 
     @Override
@@ -176,26 +186,6 @@ class ReadOnlyAwareConnection implements Connection {
     }
 
     @Override
-    public Clob createClob() throws SQLException {
-        return null;
-    }
-
-    @Override
-    public Blob createBlob() throws SQLException {
-        return null;
-    }
-
-    @Override
-    public NClob createNClob() throws SQLException {
-        return null;
-    }
-
-    @Override
-    public SQLXML createSQLXML() throws SQLException {
-        return null;
-    }
-
-    @Override
     public CallableStatement prepareCall(String sql) throws SQLException {
         return targetConnection.prepareCall(sql);
     }
@@ -203,16 +193,6 @@ class ReadOnlyAwareConnection implements Connection {
     @Override
     public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency) throws SQLException {
         return targetConnection.prepareCall(sql, resultSetType, resultSetConcurrency);
-    }
-
-    @Override
-    public Map<String, Class<?>> getTypeMap() throws SQLException {
-        return Map.of();
-    }
-
-    @Override
-    public void setTypeMap(Map<String, Class<?>> map) throws SQLException {
-
     }
 
     @Override
@@ -226,6 +206,11 @@ class ReadOnlyAwareConnection implements Connection {
     }
 
     @Override
+    public void releaseSavepoint(Savepoint savepoint) throws SQLException {
+        targetConnection.releaseSavepoint(savepoint);
+    }
+
+    @Override
     public void rollback() throws SQLException {
         targetConnection.rollback();
     }
@@ -233,6 +218,41 @@ class ReadOnlyAwareConnection implements Connection {
     @Override
     public void rollback(Savepoint savepoint) throws SQLException {
         targetConnection.rollback(savepoint);
+    }
+
+    @Override
+    public void setAutoCommit(boolean autoCommit) throws SQLException {
+        targetConnection.setAutoCommit(autoCommit);
+    }
+
+    @Override
+    public void setCatalog(String catalog) throws SQLException {
+        targetConnection.setCatalog(catalog);
+    }
+
+    @Override
+    public void setClientInfo(Properties properties) throws SQLClientInfoException {
+        targetConnection.setClientInfo(properties);
+    }
+
+    @Override
+    public void setClientInfo(String name, String value) throws SQLClientInfoException {
+        targetConnection.setClientInfo(name, value);
+    }
+
+    @Override
+    public void setHoldability(int holdability) throws SQLException {
+        targetConnection.setHoldability(holdability);
+    }
+
+    @Override
+    public void setTransactionIsolation(int level) throws SQLException {
+        targetConnection.setTransactionIsolation(level);
+    }
+
+    @Override
+    public void setTypeMap(Map<String, Class<?>> map) throws SQLException {
+        targetConnection.setTypeMap(map);
     }
 
     @Override
@@ -246,31 +266,6 @@ class ReadOnlyAwareConnection implements Connection {
     }
 
     @Override
-    public void releaseSavepoint(Savepoint savepoint) throws SQLException {
-        targetConnection.releaseSavepoint(savepoint);
-    }
-
-    @Override
-    public void setHoldability(int holdability) throws SQLException {
-        targetConnection.setHoldability(holdability);
-    }
-
-    @Override
-    public void setClientInfo(String name, String value) throws SQLClientInfoException {
-        targetConnection.setClientInfo(name, value);
-    }
-
-    @Override
-    public void setClientInfo(Properties properties) throws SQLClientInfoException {
-        targetConnection.setClientInfo(properties);
-    }
-
-    @Override
-    public void abort(Executor executor) throws SQLException {
-        targetConnection.abort(executor);
-    }
-
-    @Override
     public void setNetworkTimeout(Executor executor, int milliseconds) throws SQLException {
         targetConnection.setNetworkTimeout(executor, milliseconds);
     }
@@ -281,12 +276,29 @@ class ReadOnlyAwareConnection implements Connection {
     }
 
     @Override
+    public void setSchema(String schema) throws SQLException {
+        targetConnection.setSchema(schema);
+    }
+
+    @Override
     public <T> T unwrap(Class<T> iface) throws SQLException {
+        // Ensure that if the requested interface is Connection, or a Hikari proxy that implements Connection,
+        // this wrapper itself is returned, forcing calls to its methods (like setReadOnly).
+        if (iface.isInstance(this) || Connection.class.isAssignableFrom(iface) ||
+                iface.equals(com.zaxxer.hikari.pool.ProxyConnection.class) ||
+                iface.equals(com.zaxxer.hikari.pool.HikariProxyConnection.class)) {
+            return iface.cast(this);
+        }
+        // For other interfaces not directly related to Connection or specific Hikari proxies,
+        // delegate the unwrap call to the target connection.
         return targetConnection.unwrap(iface);
     }
 
     @Override
     public boolean isWrapperFor(Class<?> iface) throws SQLException {
-        return targetConnection.isWrapperFor(iface);
+        return iface.isInstance(this) || Connection.class.isAssignableFrom(iface) ||
+                iface.equals(com.zaxxer.hikari.pool.ProxyConnection.class) ||
+                iface.equals(com.zaxxer.hikari.pool.HikariProxyConnection.class) ||
+                targetConnection.isWrapperFor(iface);
     }
 }

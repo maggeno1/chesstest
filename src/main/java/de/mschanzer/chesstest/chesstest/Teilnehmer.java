@@ -1,11 +1,13 @@
 package de.mschanzer.chesstest.chesstest;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 
 @Entity
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"}) // Füge diese Zeile hinzu
 public class Teilnehmer {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

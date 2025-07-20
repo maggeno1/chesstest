@@ -3,6 +3,7 @@ package de.mschanzer.chesstest.chesstest; // Stellen Sie sicher, dass das Paket 
 import jakarta.persistence.*;
 import java.util.ArrayList;
 import java.util.List;
+import com.fasterxml.jackson.annotation.JsonBackReference; // NEU
 
 @Entity
 public class TournamentRound {
@@ -15,6 +16,7 @@ public class TournamentRound {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "tournament_id")
+    @JsonBackReference // NEU: Annotation hinzugefügt
     private Tournament tournament;
 
     @OneToMany(mappedBy = "round", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
@@ -66,8 +68,7 @@ public class TournamentRound {
         return pairings;
     }
 
-    public void addPairing(Pairing pairing) {
-        this.pairings.add(pairing);
-        pairing.setRound(this);
+    public void setPairings(List<Pairing> pairings) {
+        this.pairings = pairings;
     }
 }

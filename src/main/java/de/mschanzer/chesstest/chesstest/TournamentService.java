@@ -33,337 +33,116 @@ public class TournamentService {
     @Transactional
     public Tournament startNewTournament(String tournamentName, int totalRounds) {
         if (tournamentRepository.findByFinished(false) != null) {
-            throw new IllegalStateException("Es läuft bereits ein Turnier. Bitte beenden Sie es zuerst.");
+            throw new IllegalStateException("Es läuft bereits ein Turnier. Bitte beenden Sie das aktuelle Turnier zuerst.");
         }
 
-        List<Teilnehmer> activePlayers = teilnehmerRepository.findByAnwesenheitsStatus("anwesend");
-        if (activePlayers.isEmpty()) {
+        List<Teilnehmer> activeParticipants = teilnehmerRepository.findByAnwesenheitsStatus("anwesend");
+        if (activeParticipants.isEmpty()) {
             throw new IllegalStateException("Keine anwesenden Teilnehmer gefunden, um ein Turnier zu starten.");
         }
 
+        // Setze Turnierpunkte und Buchholz für alle aktiven Teilnehmer zurück
+        activeParticipants.forEach(t -> {
+            t.setTournamentPoints(0.0);
+            t.setBuchholzScore(0.0);
+            teilnehmerRepository.save(t);
+        });
+
         Tournament tournament = new Tournament(tournamentName, totalRounds);
-        tournamentRepository.save(tournament);
+        tournament = tournamentRepository.save(tournament);
 
-        // Setze Punkte und Buchholz-Werte für alle Teilnehmer auf 0 zurück
-        for(Teilnehmer player : activePlayers) {
-            player.setTournamentPoints(0.0);
-            player.setBuchholzScore(0.0);
-            teilnehmerRepository.save(player);
-        }
-
-        // Start der ersten Runde
+        // Erstelle die erste Runde und ihre Paarungen
         createAndPairNextRound(tournament);
 
         return tournament;
     }
 
     /**
-     * Erstellt die Paarungen für die nächste Runde nach dem Schweizer System.
-     * @param tournament Das aktuelle Turnier.
-     * @return Die neu erstellte Runde.
-     * @throws IllegalStateException wenn das Turnier beendet ist oder die aktuelle Runde nicht abgeschlossen ist.
-     */
-    @Transactional
-    public TournamentRound createAndPairNextRound(Tournament tournament) {
-        if (tournament.isFinished()) {
-            throw new IllegalStateException("Das Turnier ist bereits beendet.");
-        }
-        if (tournament.getCurrentRound() > 0) {
-            TournamentRound prevRound = tournamentRoundRepository.findByTournamentAndRoundNumber(tournament, tournament.getCurrentRound());
-            if (prevRound != null && !prevRound.isCompleted()) {
-                throw new IllegalStateException("Die aktuelle Runde " + prevRound.getRoundNumber() + " ist noch nicht abgeschlossen.");
-            }
-        }
-
-        int nextRoundNumber = tournament.getCurrentRound() + 1;
-        if (nextRoundNumber > tournament.getTotalRounds()) {
-            tournament.setFinished(true);
-            tournament.setEndTime(LocalDateTime.now());
-            tournamentRepository.save(tournament);
-            throw new IllegalStateException("Alle Runden sind gespielt. Das Turnier ist beendet.");
-        }
-
-        TournamentRound newRound = new TournamentRound(nextRoundNumber, tournament);
-        tournamentRoundRepository.save(newRound);
-
-        // Aktualisiere Buchholz vor jeder neuen Runde (nachdem Ergebnisse der letzten Runde vorliegen)
-        if (tournament.getCurrentRound() > 0) {
-            recalculateBuchholz(tournament);
-        }
-
-        List<Teilnehmer> activePlayers = teilnehmerRepository.findByAnwesenheitsStatus("anwesend");
-        // Sortiere Spieler nach Punkten (absteigend) und dann nach Buchholz (absteigend), Name (aufsteigend) für die Paarung
-        activePlayers.sort(Comparator
-                .comparing(Teilnehmer::getTournamentPoints, Comparator.reverseOrder())
-                .thenComparing(Teilnehmer::getBuchholzScore, Comparator.reverseOrder())
-                .thenComparing(Teilnehmer::getName));
-
-        List<Teilnehmer> unpairedPlayers = new ArrayList<>(activePlayers);
-        List<Pairing> pairings = new ArrayList<>();
-        Set<Teilnehmer> pairedThisRound = new HashSet<>();
-
-        // Handle Freilos (Bye)
-        if (unpairedPlayers.size() % 2 != 0) {
-            // Finde den niedrigstplatzierten Spieler ohne Freilos in vorherigen Runden
-            Optional<Teilnehmer> byePlayerOpt = unpairedPlayers.stream()
-                    .filter(p -> !hasReceivedByeInPreviousRounds(p, tournament))
-                    .min(Comparator
-                            .comparing(Teilnehmer::getTournamentPoints)
-                            .thenComparing(Teilnehmer::getName)); // Bei gleichen Punkten Alphabetisch
-
-            if (byePlayerOpt.isPresent()) {
-                Teilnehmer byePlayer = byePlayerOpt.get();
-                pairings.add(new Pairing(byePlayer, newRound));
-                pairedThisRound.add(byePlayer);
-                unpairedPlayers.remove(byePlayer);
-                System.out.println("Freilos für: " + byePlayer.getName() + " in Runde " + newRound.getRoundNumber());
-            } else {
-                // Fallback: Wenn alle schon ein Freilos hatten, gib es dem Letzten
-                Teilnehmer byePlayer = unpairedPlayers.get(unpairedPlayers.size() - 1);
-                pairings.add(new Pairing(byePlayer, newRound));
-                pairedThisRound.add(byePlayer);
-                unpairedPlayers.remove(byePlayer);
-                System.out.println("Freilos für: " + byePlayer.getName() + " (alle hatten schon bye) in Runde " + newRound.getRoundNumber());
-            }
-        }
-
-        // Paarungsalgorithmus (sehr vereinfachtes Schweizer System)
-        // Versuche, Spieler mit ähnlichen Punkten zu paaren
-        for (int i = 0; i < unpairedPlayers.size(); i++) {
-            Teilnehmer white = unpairedPlayers.get(i);
-            if (pairedThisRound.contains(white)) continue;
-
-            for (int j = i + 1; j < unpairedPlayers.size(); j++) {
-                Teilnehmer black = unpairedPlayers.get(j);
-                if (pairedThisRound.contains(black)) continue;
-
-                // Überprüfe, ob sie bereits gegeneinander gespielt haben
-                if (!havePlayedBefore(white, black, tournament)) {
-                    // Berücksichtige Farben (vereinfacht: versuche, Farben auszugleichen)
-                    if (canPairWithColorBalance(white, black, tournament)) {
-                        pairings.add(new Pairing(white, black, newRound));
-                        pairedThisRound.add(white);
-                        pairedThisRound.add(black);
-                        break; // Schwarzer Spieler gefunden, weiter zum nächsten weißen Spieler
-                    }
-                }
-            }
-        }
-
-        // Fallback für nicht gepaarte Spieler (kann bei komplexeren Regeln vorkommen)
-        // Hier müsste eine robustere Lösung her, die z.B. stärkere Gegner zulässt oder mehr Iterationen macht.
-        // Für eine einfache Implementierung, paaren wir sie einfach der Reihe nach auf
-        List<Teilnehmer> remainingUnpaired = unpairedPlayers.stream()
-                .filter(p -> !pairedThisRound.contains(p))
-                .collect(Collectors.toList());
-
-        for (int i = 0; i + 1 < remainingUnpaired.size(); i += 2) {
-            Teilnehmer white = remainingUnpaired.get(i);
-            Teilnehmer black = remainingUnpaired.get(i + 1);
-            if (!pairedThisRound.contains(white) && !pairedThisRound.contains(black)) {
-                pairings.add(new Pairing(white, black, newRound));
-                pairedThisRound.add(white);
-                pairedThisRound.add(black);
-            }
-        }
-
-
-        // Speichern der Paarungen
-        for (Pairing p : pairings) {
-            newRound.addPairing(p);
-            pairingRepository.save(p);
-        }
-
-        tournament.setCurrentRound(nextRoundNumber);
-        tournamentRepository.save(tournament);
-
-        return newRound;
-    }
-
-    /**
-     * Überprüft, ob zwei Spieler in diesem Turnier bereits gegeneinander gespielt haben.
-     */
-    private boolean havePlayedBefore(Teilnehmer p1, Teilnehmer p2, Tournament tournament) {
-        for (TournamentRound round : tournament.getRounds()) {
-            for (Pairing pairing : round.getPairings()) {
-                if (!pairing.isBye()) { // Freilose zählen nicht als gespielte Partien
-                    if ((pairing.getWhitePlayer().equals(p1) && pairing.getBlackPlayer().equals(p2)) ||
-                            (pairing.getWhitePlayer().equals(p2) && pairing.getBlackPlayer().equals(p1))) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Prüft, ob ein Spieler in vorherigen Runden ein Freilos erhalten hat.
-     */
-    private boolean hasReceivedByeInPreviousRounds(Teilnehmer player, Tournament tournament) {
-        return tournament.getRounds().stream()
-                .flatMap(r -> r.getPairings().stream())
-                .filter(Pairing::isBye)
-                .anyMatch(p -> p.getWhitePlayer().equals(player));
-    }
-
-    /**
-     * Vereinfachte Farbbalance-Prüfung: Versucht, abwechselnd weiße und schwarze Farben zu verteilen.
-     * Für ein echtes Schweizer System sind hier detailliertere Farbgeschichten notwendig.
-     * Hier wird nur geprüft, ob der Spieler nicht 2x die gleiche Farbe in Folge hatte
-     * und versucht, die Gesamtanzahl an Weiß- und Schwarzpartien auszugleichen.
-     */
-    private boolean canPairWithColorBalance(Teilnehmer whiteCandidate, Teilnehmer blackCandidate, Tournament tournament) {
-        // Zähle gespielte Weiß- und Schwarzpartien für beide Spieler
-        int whiteCount1 = 0;
-        int blackCount1 = 0;
-        int whiteCount2 = 0;
-        int blackCount2 = 0;
-
-        for (TournamentRound round : tournament.getRounds()) {
-            for (Pairing pairing : round.getPairings()) {
-                if (!pairing.isBye()) {
-                    if (pairing.getWhitePlayer().equals(whiteCandidate)) whiteCount1++;
-                    if (pairing.getBlackPlayer().equals(whiteCandidate)) blackCount1++;
-                    if (pairing.getWhitePlayer().equals(blackCandidate)) whiteCount2++;
-                    if (pairing.getBlackPlayer().equals(blackCandidate)) blackCount2++;
-                }
-            }
-        }
-
-        // Einfache Regel: Versuche Spieler zu vermeiden, die 2x hintereinander die gleiche Farbe hatten (außer in Runde 1)
-        if (tournament.getCurrentRound() > 0) {
-            Optional<Pairing> lastPairingWhite = tournament.getRounds().get(tournament.getCurrentRound() - 1).getPairings().stream()
-                    .filter(p -> p.getWhitePlayer() != null && p.getWhitePlayer().equals(whiteCandidate))
-                    .findFirst();
-            Optional<Pairing> lastPairingBlack = tournament.getRounds().get(tournament.getCurrentRound() - 1).getPairings().stream()
-                    .filter(p -> p.getBlackPlayer() != null && p.getBlackPlayer().equals(blackCandidate))
-                    .findFirst();
-
-            if (lastPairingWhite.isPresent() && lastPairingWhite.get().getWhitePlayer().equals(whiteCandidate)) { // whiteCandidate hatte zuletzt Weiß
-                return false; // Darf nicht wieder Weiß bekommen
-            }
-            if (lastPairingBlack.isPresent() && lastPairingBlack.get().getBlackPlayer().equals(blackCandidate)) { // blackCandidate hatte zuletzt Schwarz
-                return false; // Darf nicht wieder Schwarz bekommen
-            }
-        }
-
-
-        // Versuche, dass niemand zu viele Weiß- oder Schwarzpartien hat
-        // z.B. wenn whiteCandidate schon viel Weiß hatte und blackCandidate viel Schwarz,
-        // ist diese Paarung möglicherweise ungünstig, wenn man Farbe ausgleichen will.
-        if (Math.abs(whiteCount1 - blackCount1) > 1 && (whiteCount1 > blackCount1)) return false; // whiteCandidate hat zu viel Weiß
-        if (Math.abs(whiteCount2 - blackCount2) > 1 && (blackCount2 > whiteCount2)) return false; // blackCandidate hat zu viel Schwarz
-
-        return true; // Paarung ist zulässig (vereinfacht)
-    }
-
-
-    /**
-     * Meldet ein Ergebnis für eine Paarung und aktualisiert die Punkte der Spieler.
-     * @param pairingId ID der Paarung
-     * @param result Ergebnis (1.0 = Weiß gewinnt, 0.5 = Remis, 0.0 = Schwarz gewinnt)
+     * Schließt eine Paarung ab und aktualisiert die Turnierpunkte der Spieler.
+     * @param pairingId Die ID der Paarung.
+     * @param result Das Ergebnis der Partie (1.0 für Weiß gewinnt, 0.5 für Remis, 0.0 für Schwarz gewinnt).
      * @return Die aktualisierte Paarung.
-     * @throws IllegalArgumentException bei ungültigem Ergebnis
-     * @throws NoSuchElementException wenn Paarung nicht gefunden wird
+     * @throws NoSuchElementException wenn die Paarung nicht gefunden wird.
+     * @throws IllegalStateException wenn das Ergebnis ungültig ist oder die Runde bereits abgeschlossen ist.
      */
     @Transactional
-    public Pairing reportResult(Long pairingId, Double result) {
-        if (result != 0.0 && result != 0.5 && result != 1.0) {
-            throw new IllegalArgumentException("Ungültiges Ergebnis. Erlaubt sind 1.0 (Weiß gewinnt), 0.5 (Remis), 0.0 (Schwarz gewinnt).");
-        }
-
+    public Pairing completePairing(Long pairingId, Double result) {
         Pairing pairing = pairingRepository.findById(pairingId)
-                .orElseThrow(() -> new NoSuchElementException("Paarung mit ID " + pairingId + " nicht gefunden."));
+                .orElseThrow(() -> new NoSuchElementException("Paarung nicht gefunden mit ID: " + pairingId));
 
         if (pairing.getResult() != null) {
-            // Wenn bereits ein Ergebnis vorhanden ist, muss man erst die alten Punkte rückgängig machen.
-            // Für diese einfache Implementierung überspringen wir das oder verbieten es.
-            // Hier verbieten wir es, um Komplexität zu reduzieren.
-            throw new IllegalStateException("Ergebnis für diese Paarung wurde bereits gemeldet.");
+            throw new IllegalStateException("Diese Paarung wurde bereits abgeschlossen.");
+        }
+        if (result == null || (result != 0.0 && result != 0.5 && result != 1.0)) {
+            throw new IllegalStateException("Ungültiges Ergebnis. Erlaubte Werte: 0.0, 0.5, 1.0");
         }
 
         pairing.setResult(result);
-        pairingRepository.save(pairing);
+        pairing = pairingRepository.save(pairing);
 
+        // Aktualisiere Turnierpunkte
         Teilnehmer whitePlayer = pairing.getWhitePlayer();
         Teilnehmer blackPlayer = pairing.getBlackPlayer();
 
-        // Punkte aktualisieren
-        if (whitePlayer != null) {
-            if (result == 1.0) whitePlayer.setTournamentPoints(whitePlayer.getTournamentPoints() + 1.0);
-            else if (result == 0.5) whitePlayer.setTournamentPoints(whitePlayer.getTournamentPoints() + 0.5);
-            teilnehmerRepository.save(whitePlayer);
+        if (!pairing.isBye()) {
+            if (result == 1.0) { // Weiß gewinnt
+                whitePlayer.setTournamentPoints(whitePlayer.getTournamentPoints() + 1.0);
+            } else if (result == 0.5) { // Remis
+                whitePlayer.setTournamentPoints(whitePlayer.getTournamentPoints() + 0.5);
+                blackPlayer.setTournamentPoints(blackPlayer.getTournamentPoints() + 0.5);
+            } else { // Schwarz gewinnt (0.0)
+                blackPlayer.setTournamentPoints(blackPlayer.getTournamentPoints() + 1.0);
+            }
+        } else {
+            // Bei Freilos erhält der Spieler 1 Punkt (wird schon im Konstruktor gesetzt)
+            // Es wird nur sichergestellt, dass der Punkt korrekt verbucht wird
+            whitePlayer.setTournamentPoints(whitePlayer.getTournamentPoints() + 1.0);
         }
-        if (blackPlayer != null) {
-            if (result == 0.0) blackPlayer.setTournamentPoints(blackPlayer.getTournamentPoints() + 1.0);
-            else if (result == 0.5) blackPlayer.setTournamentPoints(blackPlayer.getTournamentPoints() + 0.5);
+
+        teilnehmerRepository.save(whitePlayer);
+        if (blackPlayer != null) { // BlackPlayer kann bei Freilos null sein
             teilnehmerRepository.save(blackPlayer);
         }
 
-        // Prüfen, ob alle Paarungen in der Runde abgeschlossen sind
-        TournamentRound round = pairing.getRound();
-        boolean allPairingsCompleted = round.getPairings().stream()
+        // Überprüfe, ob die Runde abgeschlossen ist
+        TournamentRound currentRound = pairing.getRound();
+        boolean allPairingsCompleted = currentRound.getPairings().stream()
                 .allMatch(p -> p.getResult() != null);
+
         if (allPairingsCompleted) {
-            round.setCompleted(true);
-            tournamentRoundRepository.save(round);
+            currentRound.setCompleted(true);
+            tournamentRoundRepository.save(currentRound);
+            // Buchholz-Wertung für alle Teilnehmer neu berechnen, da sich die Gegnerpunkte geändert haben könnten
+            recalculateBuchholz(currentRound.getTournament());
         }
 
         return pairing;
     }
 
     /**
-     * Berechnet die Buchholz-Wertung für alle anwesenden Spieler.
-     * Die Buchholz-Wertung ist die Summe der Punkte der Gegner.
-     */
-    @Transactional
-    public void recalculateBuchholz(Tournament tournament) {
-        List<Teilnehmer> activePlayers = teilnehmerRepository.findByAnwesenheitsStatus("anwesend");
-        Map<Long, Double> playerPointsMap = activePlayers.stream()
-                .collect(Collectors.toMap(Teilnehmer::getId, Teilnehmer::getTournamentPoints));
-
-        for (Teilnehmer player : activePlayers) {
-            double buchholz = 0.0;
-            // Sammle alle Gegner, gegen die der Spieler in diesem Turnier gespielt hat
-            List<Teilnehmer> opponents = new ArrayList<>();
-            for (TournamentRound round : tournament.getRounds()) {
-                for (Pairing pairing : round.getPairings()) {
-                    if (pairing.isBye()) continue; // Freilose zählen nicht für Buchholz
-
-                    if (pairing.getWhitePlayer().equals(player)) {
-                        opponents.add(pairing.getBlackPlayer());
-                    } else if (pairing.getBlackPlayer().equals(player)) {
-                        opponents.add(pairing.getWhitePlayer());
-                    }
-                }
-            }
-
-            // Summiere die Punkte der Gegner
-            for (Teilnehmer opponent : opponents) {
-                buchholz += playerPointsMap.getOrDefault(opponent.getId(), 0.0);
-            }
-            player.setBuchholzScore(buchholz);
-            teilnehmerRepository.save(player); // Speichern der aktualisierten Buchholz-Wertung
-        }
-    }
-
-    /**
      * Beendet das aktuelle Turnier.
+     * @param tournamentId ID des zu beendenden Turniers.
+     * @return Das beendete Turnier.
+     * @throws NoSuchElementException wenn das Turnier nicht gefunden wird.
+     * @throws IllegalStateException wenn das Turnier bereits beendet ist.
      */
     @Transactional
     public Tournament endTournament(Long tournamentId) {
         Tournament tournament = tournamentRepository.findById(tournamentId)
-                .orElseThrow(() -> new NoSuchElementException("Turnier mit ID " + tournamentId + " nicht gefunden."));
-        tournament.setFinished(true);
+                .orElseThrow(() -> new NoSuchElementException("Turnier nicht gefunden mit ID: " + tournamentId));
+
+        if (tournament.isFinished()) {
+            throw new IllegalStateException("Turnier ist bereits beendet.");
+        }
+
         tournament.setEndTime(LocalDateTime.now());
-        tournamentRepository.save(tournament);
-        recalculateBuchholz(tournament); // Letzte Buchholz-Berechnung
-        return tournament;
+        tournament.setFinished(true);
+        return tournamentRepository.save(tournament);
     }
 
     /**
-     * Liefert das aktuell laufende Turnier.
+     * Gibt das aktuell laufende (nicht beendete) Turnier zurück.
+     * @return Das aktuelle Turnier oder null, wenn keines läuft.
      */
     @Transactional(readOnly = true)
     public Tournament getCurrentTournament() {
@@ -396,7 +175,221 @@ public class TournamentService {
             t.setBuchholzScore(0.0);
             teilnehmerRepository.save(t);
         });
-        // Optional: Alte Turniere und Runden löschen oder archivieren, falls nicht mehr benötigt
+        // Alle Runden und Paarungen löschen
+        pairingRepository.deleteAll();
+        tournamentRoundRepository.deleteAll();
+        // Alle Turniere löschen
         tournamentRepository.findAll().forEach(tournamentRepository::delete);
     }
+
+    /**
+     * Erstellt die nächste Runde für das gegebene Turnier und paart die Teilnehmer.
+     * Implementiert hier eine einfache Schweizer System Paarung.
+     * @param tournament Das Turnier, für das die nächste Runde erstellt werden soll.
+     * @return Die neu erstellte Turnierrunde mit Paarungen.
+     * @throws IllegalStateException wenn das Turnier nicht existiert, beendet ist oder die maximale Rundenzahl erreicht ist.
+     */
+    @Transactional
+    public TournamentRound createAndPairNextRound(Tournament tournament) {
+        if (tournament == null) {
+            throw new IllegalStateException("Turnier darf nicht null sein.");
+        }
+        if (tournament.isFinished()) {
+            throw new IllegalStateException("Das Turnier ist bereits beendet.");
+        }
+
+        int nextRoundNumber = tournament.getCurrentRound() + 1;
+        if (nextRoundNumber > tournament.getTotalRounds()) {
+            throw new IllegalStateException("Maximale Rundenzahl für dieses Turnier erreicht.");
+        }
+
+        // Sicherstellen, dass die vorherige Runde abgeschlossen ist (außer für Runde 1)
+        if (tournament.getCurrentRound() > 0) {
+            TournamentRound previousRound = tournamentRoundRepository.findByTournamentAndRoundNumber(tournament, tournament.getCurrentRound());
+            if (previousRound != null && !previousRound.isCompleted()) {
+                throw new IllegalStateException("Die aktuelle Runde " + tournament.getCurrentRound() + " ist noch nicht abgeschlossen. Bitte alle Ergebnisse eintragen.");
+            }
+        }
+
+
+        TournamentRound newRound = new TournamentRound(nextRoundNumber, tournament);
+        newRound = tournamentRoundRepository.save(newRound);
+
+        // Teilnehmer nach Punkten sortieren (höchste Punktzahl zuerst)
+        List<Teilnehmer> participants = teilnehmerRepository.findByAnwesenheitsStatus("anwesend");
+        participants.sort(Comparator.comparing(Teilnehmer::getTournamentPoints, Comparator.reverseOrder()));
+
+        List<Pairing> pairings = new ArrayList<>();
+        Set<Teilnehmer> pairedPlayers = new HashSet<>();
+
+        // Handle ungerade Anzahl von Spielern (Freilos)
+        if (participants.size() % 2 != 0) {
+            Teilnehmer playerForBye = findPlayerForBye(participants, tournament);
+            if (playerForBye != null) {
+                Pairing byePairing = new Pairing(playerForBye, newRound);
+                pairings.add(byePairing);
+                pairedPlayers.add(playerForBye);
+                System.out.println("Freilos für: " + playerForBye.getName() + " in Runde " + nextRoundNumber);
+            } else {
+                // Dies sollte nicht passieren, wenn die Logik korrekt ist
+                throw new IllegalStateException("Konnte keinen Spieler für ein Freilos finden.");
+            }
+        }
+
+        // Einfache Schweizer System Paarung (vereinfacht)
+        List<Teilnehmer> availablePlayers = participants.stream()
+                .filter(p -> !pairedPlayers.contains(p))
+                .collect(Collectors.toList());
+
+        while (!availablePlayers.isEmpty()) {
+            Teilnehmer player1 = availablePlayers.remove(0); // Immer den punkthöchsten verfügbaren Spieler nehmen
+            Teilnehmer player2 = null;
+
+            // Suche nach einem passenden Gegner
+            for (int i = 0; i < availablePlayers.size(); i++) {
+                Teilnehmer potentialOpponent = availablePlayers.get(i);
+                // Überprüfe, ob die Spieler noch nicht gegeneinander gespielt haben
+                if (!havePlayedBefore(player1, potentialOpponent, tournament)) {
+                    player2 = potentialOpponent;
+                    break;
+                }
+            }
+
+            if (player2 != null) {
+                availablePlayers.remove(player2);
+                Pairing newPairing = new Pairing(player1, player2, newRound);
+                pairings.add(newPairing);
+                System.out.println("Paarung: " + player1.getName() + " (weiß) vs. " + player2.getName() + " (schwarz)");
+            } else {
+                // Fallback: Wenn kein idealer Gegner gefunden wird, paare mit dem nächsten verfügbaren
+                // Dies kann zu Wiederholungen führen, wenn die `havePlayedBefore`-Logik zu restriktiv ist
+                // Für ein robustes Schweizer System ist hier eine komplexere Logik erforderlich (z.B. Brackets)
+                if (!availablePlayers.isEmpty()) {
+                    player2 = availablePlayers.remove(0);
+                    Pairing newPairing = new Pairing(player1, player2, newRound);
+                    pairings.add(newPairing);
+                    System.out.println("Fallback Paarung (potenziell Wiederholung): " + player1.getName() + " (weiß) vs. " + player2.getName() + " (schwarz)");
+                } else {
+                    // Sollte nicht passieren, wenn die Anzahl der Spieler gerade ist (nach Freilos)
+                    System.err.println("Fehler: Konnte keinen Gegner für " + player1.getName() + " finden.");
+                }
+            }
+        }
+
+        pairingRepository.saveAll(pairings);
+        newRound.setPairings(pairings); // Aktualisiere die Paarungen in der Runde
+
+        tournament.setCurrentRound(nextRoundNumber);
+        tournament.getRounds().add(newRound); // Füge die neue Runde zur Turnierliste hinzu
+        tournamentRepository.save(tournament);
+
+        return newRound;
+    }
+
+    /**
+     * Hilfsmethode, um den Spieler für ein Freilos zu finden.
+     * Ein Spieler, der bereits ein Freilos hatte, sollte nach Möglichkeit keines mehr bekommen.
+     * Andernfalls der Spieler mit den wenigsten Punkten.
+     * @param participants Die Liste der aktiven Teilnehmer.
+     * @param tournament Das aktuelle Turnier.
+     * @return Der Spieler, der das Freilos erhält.
+     */
+    private Teilnehmer findPlayerForBye(List<Teilnehmer> participants, Tournament tournament) {
+        // Spieler finden, die noch kein Freilos hatten
+        List<Teilnehmer> playersWithoutBye = participants.stream()
+                .filter(p -> tournamentRoundRepository.findByTournamentOrderByRoundNumberAsc(tournament).stream()
+                        .flatMap(r -> r.getPairings().stream())
+                        .noneMatch(pa -> pa.isBye() && pa.getWhitePlayer().equals(p)))
+                .collect(Collectors.toList());
+
+        if (!playersWithoutBye.isEmpty()) {
+            // Gib dem Spieler mit den wenigsten Punkten, der noch kein Freilos hatte, das Freilos
+            return playersWithoutBye.stream()
+                    .min(Comparator.comparing(Teilnehmer::getTournamentPoints))
+                    .orElse(null);
+        } else {
+            // Wenn alle Spieler schon ein Freilos hatten, gib es dem Spieler mit den wenigsten Punkten
+            return participants.stream()
+                    .min(Comparator.comparing(Teilnehmer::getTournamentPoints))
+                    .orElse(null);
+        }
+    }
+
+
+    /**
+     * Überprüft, ob zwei Spieler in diesem Turnier bereits gegeneinander gespielt haben.
+     * @param player1 Spieler 1
+     * @param player2 Spieler 2
+     * @param tournament Das Turnier
+     * @return true, wenn sie bereits gegeneinander gespielt haben, sonst false.
+     */
+    private boolean havePlayedBefore(Teilnehmer player1, Teilnehmer player2, Tournament tournament) {
+        // Holen Sie alle Runden des Turniers
+        List<TournamentRound> rounds = tournamentRoundRepository.findByTournamentOrderByRoundNumberAsc(tournament);
+
+        for (TournamentRound round : rounds) {
+            // Durchsuchen Sie die Paarungen jeder Runde
+            for (Pairing pairing : round.getPairings()) {
+                // Überprüfen Sie, ob Spieler 1 und Spieler 2 in dieser Paarung waren
+                if ((pairing.getWhitePlayer().equals(player1) && pairing.getBlackPlayer() != null && pairing.getBlackPlayer().equals(player2)) ||
+                        (pairing.getWhitePlayer().equals(player2) && pairing.getBlackPlayer() != null && pairing.getBlackPlayer().equals(player1))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Berechnet die Buchholz-Wertung für alle Teilnehmer eines Turniers neu.
+     * Die Buchholz-Wertung ist die Summe der Turnierpunkte aller Gegner.
+     * Bei einem Freilos zählt der Gegnerpunkt des "virtuellen" Gegners (Standard: 0.5 Punkte für den Spieler).
+     * @param tournament Das Turnier, für das die Buchholz-Wertung berechnet werden soll.
+     */
+    @Transactional
+    public void recalculateBuchholz(Tournament tournament) {
+        List<Teilnehmer> participants = teilnehmerRepository.findByAnwesenheitsStatus("anwesend");
+        Map<Long, Teilnehmer> participantMap = participants.stream()
+                .collect(Collectors.toMap(Teilnehmer::getId, p -> p));
+
+        // Initialisiere Buchholz-Werte auf 0
+        participants.forEach(p -> p.setBuchholzScore(0.0));
+
+        // Sammle alle Paarungen aus allen Runden des Turniers
+        List<Pairing> allPairings = new ArrayList<>();
+        List<TournamentRound> rounds = tournamentRoundRepository.findByTournamentOrderByRoundNumberAsc(tournament);
+        for (TournamentRound round : rounds) {
+            allPairings.addAll(round.getPairings());
+        }
+
+        // Berechne Buchholz für jeden Teilnehmer
+        for (Teilnehmer participant : participants) {
+            double buchholzScore = 0.0;
+            // Finde alle Paarungen, an denen dieser Teilnehmer beteiligt war
+            List<Pairing> participantPairings = allPairings.stream()
+                    .filter(p -> p.getWhitePlayer().equals(participant) || (p.getBlackPlayer() != null && p.getBlackPlayer().equals(participant)))
+                    .collect(Collectors.toList());
+
+            for (Pairing pairing : participantPairings) {
+                if (pairing.isBye()) {
+                    // Bei einem Freilos zählt der "virtuelle Gegner" 0.5 Punkte
+                    buchholzScore += 0.5; // Oder je nach Regelwerk, manchmal ist es auch der Durchschnitt der Gegnerpunkte
+                } else {
+                    Teilnehmer opponent = null;
+                    if (pairing.getWhitePlayer().equals(participant)) {
+                        opponent = pairing.getBlackPlayer();
+                    } else {
+                        opponent = pairing.getWhitePlayer();
+                    }
+                    if (opponent != null && opponent.getTournamentPoints() != null) {
+                        buchholzScore += opponent.getTournamentPoints();
+                    }
+                }
+            }
+            participant.setBuchholzScore(buchholzScore);
+        }
+        teilnehmerRepository.saveAll(participants);
+    }
+
+    // Weitere Methoden wie `getTournamentStandings`, `resetAllTournamentData` bleiben unverändert
 }
